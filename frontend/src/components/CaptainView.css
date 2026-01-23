@@ -1,0 +1,180 @@
+.captain-view {
+  background: #16213e;
+  padding: 2rem;
+  border-radius: 12px;
+}
+
+.session-code {
+  font-size: 2rem;
+  color: #667eea;
+  font-weight: bold;
+  letter-spacing: 0.2em;
+}
+
+.team-selection {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  margin: 2rem 0;
+}
+
+.team-card {
+  background: #0f1626;
+  padding: 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.3s;
+}
+
+.team-card:hover {
+  border-color: #667eea;
+}
+
+.team-card.selected {
+  border-color: #667eea;
+  background: #1a2332;
+}
+
+.team-card ul {
+  list-style: none;
+  margin-top: 0.5rem;
+}
+
+.team-card li {
+  padding: 0.25rem 0;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.matrix-status {
+  background: #0f1626;
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin: 2rem 0;
+}
+
+.matrix-status ul {
+  list-style: none;
+  margin-top: 1rem;
+}
+
+.matrix-status li {
+  padding: 0.5rem 0;
+}
+
+.options {
+  margin-top: 1.5rem;
+}
+
+.options button {
+  display: block;
+  width: 100%;
+  margin: 0.5rem 0;
+  text-align: left;
+  background: #0f1626;
+  color: #eee;
+}
+
+.options button.recommended {
+  background: #667eea;
+  color: white;
+}
+
+.tournament-card {
+  background: #0f1626;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  border-radius: 8px;
+}
+
+.matrix-display {
+  margin: 2rem 0;
+  background: #0f1626;
+  padding: 1.5rem;
+  border-radius: 8px;
+}
+
+.matrix-table {
+  overflow-x: auto;
+}
+
+.matrix-table table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+.matrix-table th {
+  background: #1a2332;
+  padding: 0.75rem;
+  text-align: center;
+  border: 1px solid #0f1626;
+}
+
+.matrix-table td {
+  padding: 0.75rem;
+  text-align: center;
+  border: 1px solid #0f1626;
+}
+
+.matrix-table tbody tr:hover {
+  background: #1a2332;
+}
+
+.score-high {
+  background: #51cf66;
+  color: #000;
+  font-weight: bold;
+}
+
+.score-good {
+  background: #94d82d;
+  color: #000;
+}
+
+.score-neutral {
+  background: #ffd43b;
+  color: #000;
+}
+
+.score-bad {
+  background: #ff8787;
+  color: #000;
+}
+
+.score-low {
+  background: #ff6b6b;
+  color: #fff;
+  font-weight: bold;
+}
+
+.sessions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.session-card {
+  background: #0f1626;
+  padding: 1.5rem;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  transition: all 0.3s;
+}
+
+.session-card:hover {
+  border-color: #667eea;
+}
+
+.session-code-small {
+  font-size: 1.2rem;
+  color: #667eea;
+  font-weight: bold;
+  letter-spacing: 0.2em;
+}
+
+.tournament-card button {
+  margin-right: 0.5rem;
+}

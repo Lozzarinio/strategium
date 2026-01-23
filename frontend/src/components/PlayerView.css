@@ -1,0 +1,117 @@
+.player-view {
+  background: #16213e;
+  padding: 2rem;
+  border-radius: 12px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.join-section {
+  text-align: center;
+  padding: 2rem;
+}
+
+.session-code-input {
+  width: 200px;
+  padding: 1rem;
+  font-size: 2rem;
+  text-align: center;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  margin: 1rem;
+  border: 2px solid #667eea;
+  border-radius: 8px;
+  background: #0f1626;
+  color: #eee;
+}
+
+.error-message {
+  color: #ff6b6b;
+  margin-top: 1rem;
+}
+
+.player-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.player-button {
+  padding: 1.5rem;
+  background: #0f1626;
+  border: 2px solid transparent;
+  transition: all 0.3s;
+}
+
+.player-button:hover {
+  border-color: #667eea;
+  transform: translateY(-2px);
+}
+
+.matrix-grid {
+  margin: 2rem 0;
+}
+
+.matrix-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 1rem;
+  background: #0f1626;
+  font-weight: bold;
+  border-radius: 8px 8px 0 0;
+}
+
+.matrix-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 1rem;
+  border-bottom: 1px solid #0f1626;
+  align-items: center;
+}
+
+.opponent-info {
+  text-align: left;
+}
+
+.score-input {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.score-input input[type="range"] {
+  flex: 1;
+}
+
+.score-number {
+  width: 60px;
+  padding: 0.5rem;
+  text-align: center;
+  background: #0f1626;
+  border: 1px solid #667eea;
+  border-radius: 4px;
+  color: #eee;
+}
+
+.matrix-summary {
+  background: #0f1626;
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin: 2rem 0;
+}
+
+.summary-row {
+  padding: 0.5rem 0;
+}
+
+.submitted-section {
+  text-align: center;
+  padding: 3rem;
+}
+
+.submitted-section h3 {
+  color: #51cf66;
+  font-size: 2rem;
+  margin-bottom: 1rem;
+}
