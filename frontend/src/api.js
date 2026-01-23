@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'https://obscure-pancake-qxqrgvq9r45fw5v-8000.app.github.dev';
+const API_BASE_URL = 'https://strategium.onrender.com';
 
 export const api = {
   // Tournament endpoints
