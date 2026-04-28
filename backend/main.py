@@ -1,9 +1,6 @@
 """
 Strategium — FastAPI application.
 
-All CRUD endpoints are implemented here. The optimizer endpoint returns a
-mock result built from actual predictions; the real algorithm is Phase 3.
-
 Run locally:
     cd backend
     uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -11,13 +8,9 @@ Run locally:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import random
 import string
-import time
-from itertools import combinations
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -26,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 import models
+import optimizer as _optimizer
 import schemas
 from database import Base, engine, get_db
 
@@ -547,13 +541,13 @@ def get_completed_pairings(
     return round_.completed_pairings
 
 
-# ── Optimizer (mock) ──────────────────────────────────────────────────────────
+# ── Optimizer ─────────────────────────────────────────────────────────────────
 
 @app.post(
     "/api/v1/rounds/{round_id}/optimize",
     response_model=schemas.OptimizationResultOut,
     tags=["Optimization"],
-    summary="Run optimizer — returns mock result (Phase 3 will use real algorithm)",
+    summary="Run complete game-tree optimizer (maximin, ~130k scenarios)",
 )
 def optimize_round(
     round_id: int,
@@ -579,202 +573,4 @@ def optimize_round(
             detail=f"Predictions missing for: {missing}. All 5 players must submit before optimizing.",
         )
 
-    return _build_optimization_result(your_players, opp_players, preds)
-
-
-# ── Optimizer helper (mock maximin tree) ──────────────────────────────────────
-
-def _score(your: str, opp: str, predictions: dict) -> float:
-    return float(predictions.get(your, {}).get(opp, 10.0))
-
-
-def _build_r2_defender_options(
-    your3: list[str],
-    opp3: list[str],
-    predictions: dict,
-) -> list[dict]:
-    """
-    For a given set of 3 remaining players per side (Round 2),
-    enumerate all (your_def, opp_def) pairs and compute attacker options.
-
-    Round 2 games:
-      - your_def  vs  opp_atk_X  (opp picks which of their 2 attackers)
-      - your_chosen_atk  vs  opp_def  (you pick which of your 2 attackers)
-      - your_other_atk  vs  opp_other_atk  (automatic)
-
-    For each of your 2 "attacker options" (which of your 2 faces opp_def),
-    opp has 2 choices (which of their 2 faces your defender).
-    This gives 2×2 = 4 game paths, giving worst_case = min, best_case = max.
-    """
-    def_options = []
-
-    for your_def in your3:
-        your_atks = [p for p in your3 if p != your_def]  # exactly 2
-        opp_responses: dict[str, list[dict]] = {}
-        def_worst = float("inf")
-        def_best = float("-inf")
-
-        for opp_def in opp3:
-            opp_atks = [p for p in opp3 if p != opp_def]  # exactly 2
-            atk_options = []
-
-            # You pick which of your 2 attackers faces opp_def
-            for i in range(2):
-                chosen_atk = your_atks[i]
-                other_atk = your_atks[1 - i]
-
-                # Opp picks which of their 2 attackers faces your_def
-                path_scores = []
-                for j in range(2):
-                    opp_facing_def = opp_atks[j]
-                    opp_other = opp_atks[1 - j]
-                    total = (
-                        _score(your_def, opp_facing_def, predictions)   # game A
-                        + _score(chosen_atk, opp_def, predictions)      # game B
-                        + _score(other_atk, opp_other, predictions)     # game C
-                    )
-                    path_scores.append(total)
-
-                atk_options.append({
-                    "attackers": [chosen_atk, other_atk],
-                    "is_recommended": False,
-                    "worst_case_total": round(min(path_scores), 1),
-                    "best_case_total": round(max(path_scores), 1),
-                })
-
-            # Maximin: recommend the attacker option with highest worst-case
-            atk_options.sort(key=lambda x: x["worst_case_total"], reverse=True)
-            atk_options[0]["is_recommended"] = True
-
-            best = atk_options[0]
-            def_worst = min(def_worst, best["worst_case_total"])
-            def_best = max(def_best, best["best_case_total"])
-            opp_responses[opp_def] = atk_options
-
-        def_options.append({
-            "player": your_def,
-            "is_recommended": False,
-            "worst_case_total": round(def_worst, 1),
-            "best_case_total": round(def_best, 1),
-            "opponent_responses": opp_responses,
-        })
-
-    # Maximin: recommend the defender with highest worst-case
-    def_options.sort(key=lambda x: x["worst_case_total"], reverse=True)
-    def_options[0]["is_recommended"] = True
-    return def_options
-
-
-def _build_optimization_result(
-    your_players: list[str],
-    opp_players: list[str],
-    predictions: dict,
-) -> dict:
-    """
-    Build a complete OptimizationResult matching the TypeScript interface.
-
-    Round 2 lookup: all C(5,3) × C(5,3) = 100 combinations, fully computed.
-    Round 1 tree: for each (your_def, opp_def) pair, evaluate C(4,2)=6
-    attacker options using R1 scores + R2 lookahead.
-    """
-    t_start = time.time()
-
-    # ── Round 2 lookup (100 entries) ─────────────────────────────────────────
-    round_2_lookup: dict[str, dict] = {}
-
-    for your3 in combinations(your_players, 3):
-        for opp3 in combinations(opp_players, 3):
-            your3_list = list(your3)
-            opp3_list = list(opp3)
-            key = f"{','.join(sorted(your3_list))}|{','.join(sorted(opp3_list))}"
-            def_options = _build_r2_defender_options(your3_list, opp3_list, predictions)
-            round_2_lookup[key] = {"defender_options": def_options}
-
-    # ── Round 1 tree ──────────────────────────────────────────────────────────
-    r1_options = []
-
-    for your_def in your_players:
-        your_rem4 = [p for p in your_players if p != your_def]
-        opp_responses: dict[str, list[dict]] = {}
-        def_worst = float("inf")
-        def_best = float("-inf")
-
-        for opp_def in opp_players:
-            opp_rem4 = [p for p in opp_players if p != opp_def]
-            atk_options = []
-
-            for a1, a2 in combinations(your_rem4, 2):
-                # a1 is sent to face opp_def; a2 stays in R2 pool
-                your_r2 = [p for p in your_players if p not in (your_def, a1)]  # 3 players
-
-                worst = float("inf")
-                best = float("-inf")
-
-                # Opp picks one of their 4 non-defenders to face your_def
-                for opp_atk in opp_rem4:
-                    opp_r2 = [p for p in opp_rem4 if p != opp_atk]  # 3 players
-                    r2_key = f"{','.join(sorted(your_r2))}|{','.join(sorted(opp_r2))}"
-                    r2_tree = round_2_lookup.get(r2_key)
-
-                    r1_score = (
-                        _score(your_def, opp_atk, predictions)
-                        + _score(a1, opp_def, predictions)
-                    )
-
-                    if r2_tree and r2_tree["defender_options"]:
-                        # You play optimally in R2 (pick the best defender)
-                        r2_best_worst = max(
-                            opt["worst_case_total"] for opt in r2_tree["defender_options"]
-                        )
-                        r2_best_best = max(
-                            opt["best_case_total"] for opt in r2_tree["defender_options"]
-                        )
-                    else:
-                        r2_best_worst = r2_best_best = 30.0
-
-                    # Opp picks the opp_atk that hurts you most
-                    worst = min(worst, r1_score + r2_best_worst)
-                    best = max(best, r1_score + r2_best_best)
-
-                atk_options.append({
-                    "attackers": [a1, a2],
-                    "is_recommended": False,
-                    "worst_case_total": round(worst, 1),
-                    "best_case_total": round(best, 1),
-                })
-
-            # Maximin: recommend attacker pair with highest worst-case
-            atk_options.sort(key=lambda x: x["worst_case_total"], reverse=True)
-            atk_options[0]["is_recommended"] = True
-
-            best_atk = atk_options[0]
-            def_worst = min(def_worst, best_atk["worst_case_total"])
-            def_best = max(def_best, best_atk["best_case_total"])
-            opp_responses[opp_def] = atk_options
-
-        r1_options.append({
-            "player": your_def,
-            "is_recommended": False,
-            "worst_case_total": round(def_worst, 1),
-            "best_case_total": round(def_best, 1),
-            "opponent_responses": opp_responses,
-        })
-
-    # Maximin: recommend the defender with highest worst-case
-    r1_options.sort(key=lambda x: x["worst_case_total"], reverse=True)
-    r1_options[0]["is_recommended"] = True
-
-    elapsed_ms = int((time.time() - t_start) * 1000)
-    pred_hash = hashlib.md5(
-        json.dumps(predictions, sort_keys=True).encode()
-    ).hexdigest()[:8]
-
-    return {
-        "round_1": {"defender_options": r1_options},
-        "round_2_lookup": round_2_lookup,
-        "metadata": {
-            "total_scenarios": 129600,
-            "computation_time_ms": elapsed_ms,
-            "prediction_hash": pred_hash,
-        },
-    }
+    return _optimizer.optimize(your_players, opp_players, preds)
