@@ -105,6 +105,11 @@ class RoundOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RoundDetailOut(RoundOut):
+    """GET /api/v1/rounds/{round_id} — includes full opponent team."""
+    opponent_team: Optional[OpponentTeamOut] = None
+
+
 class RoundUpdate(BaseModel):
     """Used to assign an opponent team to a round."""
     opponent_team_id: Optional[int] = None
@@ -117,6 +122,24 @@ class SessionOut(BaseModel):
     id: int
     code: str
     rounds: List[RoundOut]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SessionDetailOut(BaseModel):
+    """
+    GET /api/v1/sessions/{code}
+
+    Includes the team (with players, for the player-selection dropdown)
+    and all rounds (so players can see which rounds have opponents assigned).
+    """
+    id: int
+    code: str
+    tournament_id: int
+    tournament_name: str
+    team: TeamOut
+    rounds: List[RoundDetailOut]
     created_at: datetime
 
     model_config = {"from_attributes": True}
