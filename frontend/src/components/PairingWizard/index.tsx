@@ -1,11 +1,7 @@
+import { useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useWizardState } from '../../hooks/useWizardState'
-import {
-  MOCK_OPTIMIZATION_RESULT,
-  YOUR_PLAYERS,
-  OPP_PLAYERS,
-  MOCK_PREDICTIONS,
-} from '../../mocks/optimizationResult'
+import type { OptimizationResult } from '../../types/optimization'
 import ProgressStepper from './ProgressStepper'
 import Step1 from './Step1'
 import Step2 from './Step2'
@@ -16,15 +12,96 @@ import Step6 from './Step6'
 import Step7 from './Step7'
 import Step8 from './Step8'
 
-export default function PairingWizard() {
-  const { id, roundId } = useParams()
+// ── Optimizer context shape (stored in localStorage by RoundDetail) ───────────
 
+interface OptimizerContext {
+  optimizationResult: OptimizationResult
+  yourPlayers: string[]
+  oppPlayers: string[]
+  predictions: Record<string, Record<string, number> | null>
+}
+
+function loadOptimizerContext(roundId: string): OptimizerContext | null {
+  try {
+    const raw = localStorage.getItem(`strategium-optimizer-${roundId}`)
+    if (!raw) return null
+    return JSON.parse(raw) as OptimizerContext
+  } catch {
+    return null
+  }
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export default function PairingWizard() {
+  const { id, roundId } = useParams<{ id: string; roundId: string }>()
+
+  const ctx = useMemo(
+    () => (roundId ? loadOptimizerContext(roundId) : null),
+    [roundId],
+  )
+
+  // ── No optimizer context ──────────────────────────────────────────────────
+
+  if (!ctx) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-16 text-center">
+        <div className="bg-black/30 rounded-2xl p-8 border border-white/10">
+          <p className="text-muted text-sm mb-2">Optimizer results not found.</p>
+          <p className="text-muted/60 text-xs mb-6">
+            You need to run the optimizer before starting the wizard.
+          </p>
+          <Link
+            to={`/tournament/${id}/round/${roundId}`}
+            className="inline-block px-5 py-2.5 bg-accent hover:bg-accent/90 text-white font-semibold rounded-lg transition-colors text-sm"
+          >
+            ← Go to Round Detail
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const { optimizationResult, yourPlayers, oppPlayers, predictions } = ctx
+
+  // Normalise predictions: null rows → empty objects
+  const normPredictions: Record<string, Record<string, number>> = {}
+  yourPlayers.forEach(p => {
+    normPredictions[p] = predictions[p] ?? {}
+  })
+
+  return (
+    <WizardInner
+      id={id!}
+      roundId={roundId!}
+      optimizationResult={optimizationResult}
+      yourPlayers={yourPlayers}
+      oppPlayers={oppPlayers}
+      predictions={normPredictions}
+    />
+  )
+}
+
+// ── Inner component (receives real data) ──────────────────────────────────────
+
+interface WizardInnerProps {
+  id: string
+  roundId: string
+  optimizationResult: OptimizationResult
+  yourPlayers: string[]
+  oppPlayers: string[]
+  predictions: Record<string, Record<string, number>>
+}
+
+function WizardInner({
+  id, roundId, optimizationResult, yourPlayers, oppPlayers, predictions,
+}: WizardInnerProps) {
   const wizard = useWizardState(
-    MOCK_OPTIMIZATION_RESULT,
-    YOUR_PLAYERS,
-    OPP_PLAYERS,
-    MOCK_PREDICTIONS,
-    roundId ?? '1',
+    optimizationResult,
+    yourPlayers,
+    oppPlayers,
+    predictions,
+    roundId,
   )
 
   const { state, runningTotal, allRecordedPairings, goToStep, resetWizard } = wizard
@@ -33,7 +110,7 @@ export default function PairingWizard() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
 
-      {/* ── BREADCRUMB ─────────────────────────────────────────────────────── */}
+      {/* ── BREADCRUMB ──────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 text-sm text-muted mb-6">
         <Link to={`/tournament/${id}`} className="hover:text-white transition-colors">
           Dashboard
@@ -49,14 +126,13 @@ export default function PairingWizard() {
         <span className="text-white">Pairing Wizard</span>
       </div>
 
-      {/* ── STICKY HEADER ─────────────────────────────────────────────────── */}
+      {/* ── STICKY HEADER ───────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Pairing Wizard</h1>
           <p className="text-sm text-muted mt-0.5">Round {roundId}</p>
         </div>
 
-        {/* Running total + reset */}
         <div className="flex items-center gap-3">
           {allRecordedPairings.length > 0 && (
             <div className="text-right">
@@ -78,34 +154,20 @@ export default function PairingWizard() {
         </div>
       </div>
 
-      {/* ── PROGRESS STEPPER ──────────────────────────────────────────────── */}
+      {/* ── PROGRESS STEPPER ────────────────────────────────────────────────── */}
       <ProgressStepper currentStep={step} onGoToStep={goToStep} />
 
-      {/* ── STEP CONTENT ──────────────────────────────────────────────────── */}
+      {/* ── STEP CONTENT ────────────────────────────────────────────────────── */}
       <div className="bg-black/30 rounded-2xl border border-white/10 p-6">
-        {step === 1 && (
-          <Step1 wizard={wizard} yourPlayers={YOUR_PLAYERS} />
-        )}
-        {step === 2 && (
-          <Step2 wizard={wizard} oppPlayers={OPP_PLAYERS} />
-        )}
-        {step === 3 && (
-          <Step3 wizard={wizard} yourPlayers={YOUR_PLAYERS} />
-        )}
-        {step === 4 && (
-          <Step4 wizard={wizard} oppPlayers={OPP_PLAYERS} />
-        )}
-        {step === 5 && (
-          <Step5 wizard={wizard} />
-        )}
-        {step === 6 && (
-          <Step6 wizard={wizard} />
-        )}
-        {step === 7 && (
-          <Step7 wizard={wizard} />
-        )}
+        {step === 1 && <Step1 wizard={wizard} yourPlayers={yourPlayers} />}
+        {step === 2 && <Step2 wizard={wizard} oppPlayers={oppPlayers} />}
+        {step === 3 && <Step3 wizard={wizard} yourPlayers={yourPlayers} />}
+        {step === 4 && <Step4 wizard={wizard} oppPlayers={oppPlayers} />}
+        {step === 5 && <Step5 wizard={wizard} />}
+        {step === 6 && <Step6 wizard={wizard} />}
+        {step === 7 && <Step7 wizard={wizard} />}
         {step === 8 && (
-          <Step8 wizard={wizard} optimizationResult={MOCK_OPTIMIZATION_RESULT} />
+          <Step8 wizard={wizard} optimizationResult={optimizationResult} roundId={roundId} />
         )}
       </div>
 

@@ -1,22 +1,52 @@
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { WizardHook } from '../../hooks/useWizardState'
 import type { OptimizationResult } from '../../types/optimization'
+import { api, ApiError } from '../../api/client'
 
 interface Props {
   wizard: WizardHook
   optimizationResult: OptimizationResult
+  roundId: string
 }
 
-export default function Step8({ wizard, optimizationResult }: Props) {
-  const { id, roundId } = useParams()
+export default function Step8({ wizard, optimizationResult, roundId }: Props) {
+  const { id } = useParams<{ id: string }>()
   const { allRecordedPairings, runningTotal, state } = wizard
 
-  // Best possible score from optimizer (recommended defender's best case)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+
   const bestPossible = optimizationResult.round_1.defender_options.find(
     d => d.is_recommended
   )?.best_case_total ?? 0
 
-  const allPairings = allRecordedPairings  // includes finalPairing
+  const allPairings = allRecordedPairings
+
+  async function handleSave() {
+    if (allPairings.length !== 5) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await api.saveCompletedPairings(roundId, {
+        pairings: allPairings.map(p => ({
+          your_player: p.your_player,
+          opponent_player: p.opponent_player,
+          predicted_score: p.predicted_score,
+        })),
+        total_predicted_score: runningTotal,
+        optimization_best_score: bestPossible,
+      })
+      setSaved(true)
+    } catch (err) {
+      setSaveError(
+        err instanceof ApiError ? err.message : 'Failed to save — please try again.'
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -106,26 +136,49 @@ export default function Step8({ wizard, optimizationResult }: Props) {
         </div>
       </div>
 
+      {/* Save error */}
+      {saveError && (
+        <p className="text-danger text-sm bg-danger/10 border border-danger/20 rounded-lg px-4 py-2">
+          {saveError}
+        </p>
+      )}
+
       {/* Actions */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <Link
-          to={`/tournament/${id}/round/${roundId}`}
-          className="flex-1 text-center px-5 py-3 bg-accent hover:bg-accent/90
-            text-white font-semibold rounded-xl transition-colors"
-          onClick={() => {
-            // Mark as complete — wizard state stays in localStorage for review
-          }}
-        >
-          Save & Complete Round
-        </Link>
-        <Link
-          to={`/tournament/${id}`}
-          className="flex-1 text-center px-5 py-3 bg-black/30 hover:bg-black/50 border border-white/10
-            text-muted hover:text-white font-semibold rounded-xl transition-colors"
-        >
-          Back to Dashboard
-        </Link>
-      </div>
+      {saved ? (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-success text-sm">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            Pairings saved successfully!
+          </div>
+          <Link
+            to={`/tournament/${id}`}
+            className="block text-center px-5 py-3 bg-black/30 hover:bg-black/50 border border-white/10
+              text-muted hover:text-white font-semibold rounded-xl transition-colors"
+          >
+            Back to Dashboard
+          </Link>
+        </div>
+      ) : (
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={() => void handleSave()}
+            disabled={saving || allPairings.length !== 5}
+            className="flex-1 text-center px-5 py-3 bg-accent hover:bg-accent/90 disabled:opacity-60 disabled:cursor-not-allowed
+              text-white font-semibold rounded-xl transition-colors"
+          >
+            {saving ? 'Saving…' : 'Save & Complete Round'}
+          </button>
+          <Link
+            to={`/tournament/${id}`}
+            className="flex-1 text-center px-5 py-3 bg-black/30 hover:bg-black/50 border border-white/10
+              text-muted hover:text-white font-semibold rounded-xl transition-colors"
+          >
+            Back to Dashboard
+          </Link>
+        </div>
+      )}
     </div>
   )
 }

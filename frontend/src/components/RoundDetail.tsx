@@ -1,82 +1,92 @@
-import { useState, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { api, ApiError } from '../api/client'
+import type { RoundDetailOut, TournamentOut } from '../api/client'
+import type { OptimizationResult } from '../types/optimization'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type PredRow = Record<string, number>
 type PredMatrix = Record<string, PredRow | null>
-type OptimizerState = 'idle' | 'loading' | 'results'
-
-// ── Mock data ─────────────────────────────────────────────────────────────────
-
-const MOCK_ROUND = {
-  roundNumber: 1,
-  opponent: {
-    name: 'Thunder Warriors',
-    players: [
-      { name: 'Enemy1', faction: 'Chaos' },
-      { name: 'Enemy2', faction: 'Death Guard' },
-      { name: 'Enemy3', faction: 'Th. Sons' },
-      { name: 'Enemy4', faction: 'Night Lords' },
-      { name: 'Enemy5', faction: 'World Eaters' },
-    ],
-  },
-}
-
-const YOUR_PLAYERS = [
-  { name: 'Alice', faction: 'Space Marines' },
-  { name: 'Bob', faction: 'Orks' },
-  { name: 'Carol', faction: 'Necrons' },
-  { name: 'Dave', faction: 'Tau' },
-  { name: 'Eve', faction: 'Tyranids' },
-]
-
-const INITIAL_PREDICTIONS: PredMatrix = {
-  Alice: { Enemy1: 14, Enemy2: 12, Enemy3: 16, Enemy4: 10, Enemy5: 18 },
-  Bob: { Enemy1: 12, Enemy2: 15, Enemy3: 10, Enemy4: 18, Enemy5: 14 },
-  Carol: { Enemy1: 16, Enemy2: 11, Enemy3: 13, Enemy4: 15, Enemy5: 12 },
-  Dave: null,
-  Eve: null,
-}
-
-const FILL_MOCK: PredMatrix = {
-  Dave: { Enemy1: 9, Enemy2: 17, Enemy3: 11, Enemy4: 14, Enemy5: 16 },
-  Eve: { Enemy1: 13, Enemy2: 10, Enemy3: 15, Enemy4: 12, Enemy5: 18 },
-}
-
-const MOCK_RESULTS = {
-  defender: 'Alice',
-  worstCase: 66.5,
-  bestCase: 72.0,
-  scenarios: 130000,
-  timeMs: 4200,
-}
+type OptimizerState = 'idle' | 'loading' | 'results' | 'error'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function isRowComplete(row: PredRow | null, opponents: typeof MOCK_ROUND.opponent.players): boolean {
+function isRowComplete(row: PredRow | null, opponents: Array<{ name: string }>): boolean {
   if (!row) return false
   return opponents.every(op => row[op.name] !== undefined)
+}
+
+// Stores optimizer context in localStorage so the wizard can load it.
+function storeOptimizerContext(
+  roundId: string,
+  optimizationResult: OptimizationResult,
+  yourPlayers: string[],
+  oppPlayers: string[],
+  predictions: PredMatrix,
+) {
+  try {
+    localStorage.setItem(
+      `strategium-optimizer-${roundId}`,
+      JSON.stringify({ optimizationResult, yourPlayers, oppPlayers, predictions }),
+    )
+  } catch { /* ignore storage errors */ }
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function RoundDetail() {
-  const { id, roundId } = useParams()
+  const { id, roundId } = useParams<{ id: string; roundId: string }>()
 
-  const [predictions, setPredictions] = useState<PredMatrix>(INITIAL_PREDICTIONS)
+  // Remote data
+  const [roundData, setRoundData] = useState<RoundDetailOut | null>(null)
+  const [tournament, setTournament] = useState<TournamentOut | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  // Prediction matrix (local editable copy)
+  const [predictions, setPredictions] = useState<PredMatrix>({})
   const [editingCell, setEditingCell] = useState<{ player: string; opponent: string } | null>(null)
   const [editValue, setEditValue] = useState('')
-  const [optimizerState, setOptimizerState] = useState<OptimizerState>('idle')
+  const [submittingRow, setSubmittingRow] = useState<string | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
 
-  const opponents = MOCK_ROUND.opponent.players
+  // Optimizer
+  const [optimizerState, setOptimizerState] = useState<OptimizerState>('idle')
+  const [optimizerError, setOptimizerError] = useState<string | null>(null)
+  const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null)
 
-  const allSubmitted = YOUR_PLAYERS.every(p => isRowComplete(predictions[p.name], opponents))
-  const submittedCount = YOUR_PLAYERS.filter(p => isRowComplete(predictions[p.name], opponents)).length
-  const missingPlayers = YOUR_PLAYERS.filter(p => !isRowComplete(predictions[p.name], opponents))
+  // ── Load data on mount ────────────────────────────────────────────────────
 
-  // ── Cell editing ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!id || !roundId) return
+    setLoading(true)
+    setLoadError(null)
+
+    Promise.all([
+      api.getTournament(id),
+      api.getRound(roundId),
+    ])
+      .then(([t, r]) => {
+        setTournament(t)
+        setRoundData(r)
+        // Initialise prediction matrix from round data
+        const matrix: PredMatrix = {}
+        for (const player of t.team.players) {
+          const row = r.predictions[player.name]
+          matrix[player.name] = row && Object.keys(row).length > 0 ? row : null
+        }
+        setPredictions(matrix)
+      })
+      .catch(err => {
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load round — is the backend running?'
+        )
+      })
+      .finally(() => setLoading(false))
+  }, [id, roundId])
+
+  // ── Cell editing ──────────────────────────────────────────────────────────
 
   function startEdit(player: string, opponent: string) {
     const current = predictions[player]?.[opponent]
@@ -84,63 +94,146 @@ export default function RoundDetail() {
     setEditingCell({ player, opponent })
   }
 
-  function commitEdit() {
-    if (!editingCell) return
+  async function commitEdit() {
+    if (!editingCell || !tournament || !roundData?.opponent_team) {
+      setEditingCell(null)
+      return
+    }
     const val = parseFloat(editValue)
     if (!isNaN(val) && val >= 0 && val <= 20 && Math.round(val * 2) === val * 2) {
-      setPredictions(prev => ({
-        ...prev,
-        [editingCell.player]: {
-          ...(prev[editingCell.player] ?? {}),
-          [editingCell.opponent]: val,
-        },
-      }))
+      const { player: playerName, opponent: oppName } = editingCell
+      const updatedRow: PredRow = {
+        ...(predictions[playerName] ?? {}),
+        [oppName]: val,
+      }
+      const updatedMatrix = { ...predictions, [playerName]: updatedRow }
+      setPredictions(updatedMatrix)
+
+      // Auto-submit when the whole row is now complete
+      const opponents = roundData.opponent_team.players
+      if (isRowComplete(updatedRow, opponents)) {
+        const predDict: Record<string, number> = {}
+        opponents.forEach(op => { predDict[op.name] = updatedRow[op.name] })
+        setSubmittingRow(playerName)
+        try {
+          await api.submitPredictions(
+            tournament.session.code,
+            playerName,
+            roundData.round_number,
+            predDict,
+          )
+        } catch (err) {
+          console.error('Failed to submit predictions for', playerName, err)
+        } finally {
+          setSubmittingRow(null)
+        }
+      }
     }
     setEditingCell(null)
   }
 
   function handleEditKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') { e.preventDefault(); commitEdit() }
+    if (e.key === 'Enter') { e.preventDefault(); void commitEdit() }
     if (e.key === 'Escape') { e.preventDefault(); setEditingCell(null) }
   }
 
-  // ── Optimizer ───────────────────────────────────────────────────────────────
+  // ── Optimizer ─────────────────────────────────────────────────────────────
 
-  function runOptimizer() {
+  async function runOptimizer() {
+    if (!roundId || !tournament || !roundData?.opponent_team) return
     setOptimizerState('loading')
-    setTimeout(() => setOptimizerState('results'), 2000)
+    setOptimizerError(null)
+    try {
+      const result = await api.runOptimizer(roundId)
+      setOptimizationResult(result)
+      setOptimizerState('results')
+
+      // Persist context to localStorage for the wizard
+      const yourPlayers = tournament.team.players.map(p => p.name)
+      const oppPlayers = roundData.opponent_team.players.map(p => p.name)
+      const predsCopy: PredMatrix = {}
+      yourPlayers.forEach(name => { predsCopy[name] = predictions[name] ?? null })
+      storeOptimizerContext(roundId, result, yourPlayers, oppPlayers, predsCopy)
+    } catch (err) {
+      setOptimizerState('error')
+      setOptimizerError(
+        err instanceof ApiError ? err.message : 'Optimizer failed — is the backend running?'
+      )
+    }
   }
+
+  // ── Loading / error states ────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 py-16 text-center">
+        <div className="flex items-center justify-center gap-3 text-muted">
+          <svg className="w-5 h-5 animate-spin text-accent" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+          Loading round…
+        </div>
+      </div>
+    )
+  }
+
+  if (loadError || !roundData || !tournament) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 py-16 text-center">
+        <p className="text-danger mb-4">{loadError ?? 'Round not found.'}</p>
+        <Link to={`/tournament/${id}`} className="text-accent hover:underline text-sm">← Back to Dashboard</Link>
+      </div>
+    )
+  }
+
+  if (!roundData.opponent_team) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 py-16 text-center">
+        <p className="text-muted mb-4">No opponent assigned to this round yet.</p>
+        <Link to={`/tournament/${id}`} className="text-accent hover:underline text-sm">← Back to Dashboard</Link>
+      </div>
+    )
+  }
+
+  const opponents = roundData.opponent_team.players
+  const yourPlayers = tournament.team.players
+  const allSubmitted = yourPlayers.every(p => isRowComplete(predictions[p.name], opponents))
+  const submittedCount = yourPlayers.filter(p => isRowComplete(predictions[p.name], opponents)).length
+  const missingPlayers = yourPlayers.filter(p => !isRowComplete(predictions[p.name], opponents))
+
+  const recommendedDefender = optimizationResult?.round_1.defender_options.find(d => d.is_recommended)
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
 
-      {/* ── BREADCRUMB ─────────────────────────────────────────────────────── */}
+      {/* ── BREADCRUMB ──────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 text-sm text-muted mb-6">
         <Link to={`/tournament/${id}`} className="hover:text-white transition-colors">
           Dashboard
         </Link>
         <span>/</span>
-        <span className="text-white">Round {roundId ?? MOCK_ROUND.roundNumber}</span>
+        <span className="text-white">Round {roundData.round_number}</span>
       </div>
 
-      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      {/* ── HEADER ──────────────────────────────────────────────────────────── */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">
-          Round {MOCK_ROUND.roundNumber}
+          Round {roundData.round_number}
           <span className="text-muted font-normal"> vs </span>
-          {MOCK_ROUND.opponent.name}
+          {roundData.opponent_team.name}
         </h1>
         <p className="text-muted text-sm mt-1">
-          Click any cell in the matrix to edit that player's prediction.
+          Click any cell to edit that player's prediction. Complete rows are auto-saved.
         </p>
       </div>
 
-      {/* ── PREDICTION MATRIX ──────────────────────────────────────────────── */}
+      {/* ── PREDICTION MATRIX ───────────────────────────────────────────────── */}
       <section className="mb-6">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold text-white">Prediction Matrix</h2>
           <span className="text-xs text-muted bg-white/5 border border-white/10 rounded-full px-3 py-1">
-            {submittedCount} / {YOUR_PLAYERS.length} submitted
+            {submittedCount} / {yourPlayers.length} submitted
           </span>
         </div>
 
@@ -148,15 +241,12 @@ export default function RoundDetail() {
           <table className="w-full border-collapse min-w-[640px]">
             <thead>
               <tr className="bg-black/40">
-                {/* Corner cell */}
                 <th className="px-4 py-3 text-left w-36 border-b border-r border-white/10">
-                  <span className="text-xs text-muted/60 uppercase tracking-wide">
-                    Your Player
-                  </span>
+                  <span className="text-xs text-muted/60 uppercase tracking-wide">Your Player</span>
                 </th>
                 {opponents.map(op => (
                   <th
-                    key={op.name}
+                    key={op.id}
                     className="px-3 py-3 text-center border-b border-r border-white/10 last:border-r-0 w-24"
                   >
                     <p className="text-sm font-semibold text-white leading-tight">{op.name}</p>
@@ -166,20 +256,25 @@ export default function RoundDetail() {
               </tr>
             </thead>
             <tbody>
-              {YOUR_PLAYERS.map((player, rowIdx) => {
+              {yourPlayers.map((player, rowIdx) => {
                 const row = predictions[player.name]
                 const submitted = isRowComplete(row, opponents)
+                const isSaving = submittingRow === player.name
                 return (
                   <tr
-                    key={player.name}
+                    key={player.id}
                     className={`border-b border-white/5 last:border-0 transition-colors ${
                       rowIdx % 2 === 0 ? 'bg-black/10' : 'bg-black/20'
                     }`}
                   >
-                    {/* Row header */}
                     <td className="px-4 py-3 border-r border-white/10">
                       <div className="flex items-center gap-2">
-                        {submitted ? (
+                        {isSaving ? (
+                          <svg className="w-3.5 h-3.5 text-accent animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                          </svg>
+                        ) : submitted ? (
                           <svg className="w-3.5 h-3.5 text-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                           </svg>
@@ -188,12 +283,10 @@ export default function RoundDetail() {
                         )}
                         <div>
                           <p className="text-sm font-medium text-white leading-tight">{player.name}</p>
-                          <p className="text-[10px] text-muted/60">{player.faction}</p>
+                          {player.faction && <p className="text-[10px] text-muted/60">{player.faction}</p>}
                         </div>
                       </div>
                     </td>
-
-                    {/* Score cells */}
                     {opponents.map(op => {
                       const score = row?.[op.name]
                       const isEditing =
@@ -202,7 +295,7 @@ export default function RoundDetail() {
 
                       return (
                         <td
-                          key={op.name}
+                          key={op.id}
                           onClick={() => !isEditing && startEdit(player.name, op.name)}
                           className="px-2 py-2 text-center border-r border-white/5 last:border-r-0
                             cursor-pointer hover:bg-accent/10 transition-colors group"
@@ -218,7 +311,7 @@ export default function RoundDetail() {
                               autoFocus
                               value={editValue}
                               onChange={e => setEditValue(e.target.value)}
-                              onBlur={commitEdit}
+                              onBlur={() => void commitEdit()}
                               onKeyDown={handleEditKeyDown}
                               className="w-16 text-center bg-black/60 border border-accent rounded-md
                                 px-1 py-1.5 text-white text-sm font-mono focus:outline-none
@@ -246,61 +339,52 @@ export default function RoundDetail() {
         </div>
       </section>
 
-      {/* ── PREDICTION STATUS ───────────────────────────────────────────────── */}
+      {/* ── PREDICTION STATUS ──────────────────────────────────────────────── */}
       <section className="bg-black/30 rounded-xl border border-white/10 p-5 mb-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h2 className="text-base font-semibold text-white mb-2">Submission Status</h2>
-            <div className="flex flex-wrap gap-2">
-              {YOUR_PLAYERS.map(p => {
-                const done = isRowComplete(predictions[p.name], opponents)
-                return (
-                  <div
-                    key={p.name}
-                    className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border ${
-                      done
-                        ? 'border-success/30 bg-success/10 text-success'
-                        : 'border-white/10 bg-black/20 text-muted'
-                    }`}
-                  >
-                    {done ? (
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    ) : (
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    )}
-                    {p.name}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* Fill mock data button — for testing only */}
-          {!allSubmitted && (
-            <button
-              onClick={() => setPredictions(prev => ({ ...prev, ...FILL_MOCK }))}
-              className="text-xs text-muted/60 hover:text-muted border border-white/10 hover:border-white/20 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap self-start sm:self-auto"
-            >
-              Fill {missingPlayers.map(p => p.name).join(' & ')} (test)
-            </button>
-          )}
+        <h2 className="text-base font-semibold text-white mb-2">Submission Status</h2>
+        <div className="flex flex-wrap gap-2">
+          {yourPlayers.map(p => {
+            const done = isRowComplete(predictions[p.name], opponents)
+            return (
+              <div
+                key={p.id}
+                className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border ${
+                  done
+                    ? 'border-success/30 bg-success/10 text-success'
+                    : 'border-white/10 bg-black/20 text-muted'
+                }`}
+              >
+                {done ? (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                )}
+                {p.name}
+              </div>
+            )
+          })}
         </div>
+        {!allSubmitted && (
+          <p className="mt-2 text-xs text-muted/60">
+            Waiting for predictions from{' '}
+            <span className="text-muted">{missingPlayers.map(p => p.name).join(', ')}</span>
+          </p>
+        )}
       </section>
 
       {/* ── OPTIMIZER ──────────────────────────────────────────────────────── */}
       <section className="bg-black/30 rounded-xl border border-white/10 p-5">
         <h2 className="text-base font-semibold text-white mb-4">Optimizer</h2>
 
-        {/* Idle state */}
         {optimizerState === 'idle' && (
           <div>
             <div title={!allSubmitted ? 'Waiting for all player predictions' : undefined}>
               <button
-                onClick={runOptimizer}
+                onClick={() => void runOptimizer()}
                 disabled={!allSubmitted}
                 className="px-5 py-2.5 bg-accent hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed
                   text-white font-semibold rounded-lg transition-all text-sm"
@@ -317,13 +401,9 @@ export default function RoundDetail() {
           </div>
         )}
 
-        {/* Loading state */}
         {optimizerState === 'loading' && (
           <div className="flex items-center gap-3 py-2">
-            <svg
-              className="w-5 h-5 text-accent animate-spin"
-              fill="none" viewBox="0 0 24 24"
-            >
+            <svg className="w-5 h-5 text-accent animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
             </svg>
@@ -333,31 +413,37 @@ export default function RoundDetail() {
           </div>
         )}
 
-        {/* Results state */}
-        {optimizerState === 'results' && (
+        {optimizerState === 'error' && (
+          <div>
+            <p className="text-danger text-sm mb-3">{optimizerError}</p>
+            <button
+              onClick={() => { setOptimizerState('idle'); setOptimizerError(null) }}
+              className="text-xs text-muted hover:text-white border border-white/10 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              Try again
+            </button>
+          </div>
+        )}
+
+        {optimizerState === 'results' && optimizationResult && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {/* Recommended defender */}
               <div className="bg-black/40 rounded-xl p-4 border border-accent/30">
                 <p className="text-xs text-muted/70 uppercase tracking-wide mb-1">Recommended Defender</p>
-                <p className="text-2xl font-bold text-accent">{MOCK_RESULTS.defender}</p>
+                <p className="text-2xl font-bold text-accent">{recommendedDefender?.player}</p>
               </div>
-
-              {/* Worst case */}
               <div className="bg-black/40 rounded-xl p-4 border border-white/10">
                 <p className="text-xs text-muted/70 uppercase tracking-wide mb-1">Worst Case Score</p>
                 <p className="text-2xl font-bold text-white font-mono">
-                  {MOCK_RESULTS.worstCase}
+                  {recommendedDefender?.worst_case_total}
                   <span className="text-sm text-muted font-normal ml-1">pts</span>
                 </p>
                 <p className="text-xs text-muted/60 mt-0.5">Guaranteed minimum</p>
               </div>
-
-              {/* Best case */}
               <div className="bg-black/40 rounded-xl p-4 border border-white/10">
                 <p className="text-xs text-muted/70 uppercase tracking-wide mb-1">Best Case Score</p>
                 <p className="text-2xl font-bold text-white font-mono">
-                  {MOCK_RESULTS.bestCase}
+                  {recommendedDefender?.best_case_total}
                   <span className="text-sm text-muted font-normal ml-1">pts</span>
                 </p>
                 <p className="text-xs text-muted/60 mt-0.5">If all goes your way</p>
@@ -365,12 +451,12 @@ export default function RoundDetail() {
             </div>
 
             <p className="text-xs text-muted/60">
-              {MOCK_RESULTS.scenarios.toLocaleString()} scenarios evaluated in{' '}
-              {(MOCK_RESULTS.timeMs / 1000).toFixed(1)}s
+              {optimizationResult.metadata.total_scenarios.toLocaleString()} scenarios evaluated in{' '}
+              {(optimizationResult.metadata.computation_time_ms / 1000).toFixed(1)}s
             </p>
 
             <Link
-              to={`/tournament/${id}/round/${roundId ?? '1'}/wizard`}
+              to={`/tournament/${id}/round/${roundId}/wizard`}
               className="inline-flex items-center gap-2 px-5 py-3 bg-accent hover:bg-accent/90
                 text-white font-semibold rounded-lg transition-colors text-sm"
             >

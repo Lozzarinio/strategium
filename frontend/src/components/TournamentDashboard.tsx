@@ -1,73 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link, useParams } from 'react-router-dom'
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface OpponentPlayer {
-  name: string
-  faction: string
-  notes: string
-}
-
-interface OpponentTeam {
-  id: number
-  name: string
-  players: OpponentPlayer[]
-}
-
-interface Round {
-  id: number
-  roundNumber: number
-  opponentTeamId: number | null
-}
-
-// ── Mock data ─────────────────────────────────────────────────────────────────
-
-const MOCK_TOURNAMENT = {
-  name: 'Bay Area Bash 2026',
-  sessionCode: 'A7X2K9',
-  teamName: 'Fire and Dice',
-  players: [
-    { name: 'Alice', faction: 'Space Marines' },
-    { name: 'Bob', faction: 'Orks' },
-    { name: 'Carol', faction: 'Necrons' },
-    { name: 'Dave', faction: 'Tau' },
-    { name: 'Eve', faction: 'Tyranids' },
-  ],
-}
-
-const INITIAL_OPPONENTS: OpponentTeam[] = [
-  {
-    id: 1,
-    name: 'Thunder Warriors',
-    players: [
-      { name: 'Enemy1', faction: 'Chaos', notes: 'Strong melee' },
-      { name: 'Enemy2', faction: 'Death Guard', notes: '' },
-      { name: 'Enemy3', faction: 'Thousand Sons', notes: 'Psychic heavy' },
-      { name: 'Enemy4', faction: 'Night Lords', notes: '' },
-      { name: 'Enemy5', faction: 'World Eaters', notes: 'Very aggressive' },
-    ],
-  },
-  {
-    id: 2,
-    name: 'Death Guard XV',
-    players: [
-      { name: 'Mortarion', faction: 'Death Guard', notes: 'The primarch — watch out' },
-      { name: 'Blightlord', faction: 'Death Guard', notes: '' },
-      { name: 'Foetid', faction: 'Death Guard', notes: 'Bloat drone' },
-      { name: 'Biologus', faction: 'Death Guard', notes: '' },
-      { name: 'Tallyman', faction: 'Death Guard', notes: '' },
-    ],
-  },
-]
-
-const INITIAL_ROUNDS: Round[] = [
-  { id: 1, roundNumber: 1, opponentTeamId: 1 },
-  { id: 2, roundNumber: 2, opponentTeamId: null },
-  { id: 3, roundNumber: 3, opponentTeamId: null },
-]
-
-const emptyPlayer = (): OpponentPlayer => ({ name: '', faction: '', notes: '' })
+import { api, ApiError } from '../api/client'
+import type { TournamentOut, OpponentTeamOut, RoundOut } from '../api/client'
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
@@ -76,31 +10,75 @@ const inputCls = (err?: boolean) =>
    focus:outline-none focus:border-accent transition-colors
    ${err ? 'border-danger' : 'border-white/10 hover:border-white/20'}`
 
+interface OpponentPlayerInput {
+  name: string
+  faction: string
+  notes: string
+}
+
+const emptyPlayer = (): OpponentPlayerInput => ({ name: '', faction: '', notes: '' })
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TournamentDashboard() {
-  const { id } = useParams()
+  const { id } = useParams<{ id: string }>()
 
-  const [opponents, setOpponents] = useState<OpponentTeam[]>(INITIAL_OPPONENTS)
-  const [rounds, setRounds] = useState<Round[]>(INITIAL_ROUNDS)
+  const [tournament, setTournament] = useState<TournamentOut | null>(null)
+  const [opponents, setOpponents] = useState<OpponentTeamOut[]>([])
+  const [rounds, setRounds] = useState<RoundOut[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
   const [expandedTeam, setExpandedTeam] = useState<number | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  // Add form state
+  // Add opponent form state
   const [newName, setNewName] = useState('')
-  const [newPlayers, setNewPlayers] = useState<OpponentPlayer[]>(Array.from({ length: 5 }, emptyPlayer))
+  const [newPlayers, setNewPlayers] = useState<OpponentPlayerInput[]>(Array.from({ length: 5 }, emptyPlayer))
   const [formErrors, setFormErrors] = useState<{ name?: string; players: Array<string | undefined> }>({
     players: Array(5).fill(undefined),
   })
+  const [savingTeam, setSavingTeam] = useState(false)
+  const [saveTeamError, setSaveTeamError] = useState<string | null>(null)
+
+  // Round assignment state
+  const [assigningRound, setAssigningRound] = useState<number | null>(null)
+
+  // ── Load tournament on mount ──────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!id) return
+    setLoading(true)
+    setLoadError(null)
+
+    Promise.all([
+      api.getTournament(id),
+      api.getOpponentTeams(id),
+    ])
+      .then(([t, opps]) => {
+        setTournament(t)
+        setOpponents(opps)
+        setRounds(t.session.rounds)
+      })
+      .catch(err => {
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load tournament — is the backend running?'
+        )
+      })
+      .finally(() => setLoading(false))
+  }, [id])
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
 
   function handleCopy() {
-    navigator.clipboard.writeText(MOCK_TOURNAMENT.sessionCode)
+    if (!tournament) return
+    navigator.clipboard.writeText(tournament.session.code)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
-  function updateNewPlayer(i: number, field: keyof OpponentPlayer, val: string) {
+  function updateNewPlayer(i: number, field: keyof OpponentPlayerInput, val: string) {
     setNewPlayers(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p))
     if (field === 'name') {
       setFormErrors(prev => ({
@@ -110,7 +88,7 @@ export default function TournamentDashboard() {
     }
   }
 
-  function handleSaveTeam(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSaveTeam(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const errors: typeof formErrors = { players: Array(5).fill(undefined) }
     let bad = false
@@ -119,40 +97,83 @@ export default function TournamentDashboard() {
       if (!p.name.trim()) { errors.players[i] = 'Required'; bad = true }
     })
     if (bad) { setFormErrors(errors); return }
+    if (!id) return
 
-    const team: OpponentTeam = {
-      id: Date.now(),
-      name: newName.trim(),
-      players: newPlayers.map(p => ({
-        name: p.name.trim(),
-        faction: p.faction.trim(),
-        notes: p.notes.trim(),
-      })),
+    setSavingTeam(true)
+    setSaveTeamError(null)
+    try {
+      const team = await api.createOpponentTeam(id, {
+        name: newName.trim(),
+        players: newPlayers.map(p => ({
+          name: p.name.trim(),
+          faction: p.faction.trim() || undefined,
+          notes: p.notes.trim() || undefined,
+        })),
+      })
+      setOpponents(prev => [...prev, team])
+      setExpandedTeam(team.id)
+      setShowAddForm(false)
+      setNewName('')
+      setNewPlayers(Array.from({ length: 5 }, emptyPlayer))
+      setFormErrors({ players: Array(5).fill(undefined) })
+    } catch (err) {
+      setSaveTeamError(
+        err instanceof ApiError ? err.message : 'Failed to save team — please try again.'
+      )
+    } finally {
+      setSavingTeam(false)
     }
-    setOpponents(prev => [...prev, team])
-    setExpandedTeam(team.id)
-    setShowAddForm(false)
-    setNewName('')
-    setNewPlayers(Array.from({ length: 5 }, emptyPlayer))
-    setFormErrors({ players: Array(5).fill(undefined) })
   }
 
-  function assignOpponent(roundId: number, value: string) {
-    setRounds(prev =>
-      prev.map(r => r.id === roundId ? { ...r, opponentTeamId: value ? Number(value) : null } : r)
+  async function assignOpponent(roundId: number, value: string) {
+    setAssigningRound(roundId)
+    const opponentTeamId = value ? Number(value) : null
+    try {
+      const updated = await api.updateRound(roundId, { opponent_team_id: opponentTeamId })
+      setRounds(prev => prev.map(r => r.id === roundId ? { ...r, opponent_team_id: updated.opponent_team_id } : r))
+    } catch (err) {
+      // On failure, leave the round unchanged — the dropdown will revert on next render
+      console.error('Failed to assign opponent:', err)
+    } finally {
+      setAssigningRound(null)
+    }
+  }
+
+  // ── Loading / error states ────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-16 text-center">
+        <div className="flex items-center justify-center gap-3 text-muted">
+          <svg className="w-5 h-5 animate-spin text-accent" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+          Loading tournament…
+        </div>
+      </div>
+    )
+  }
+
+  if (loadError || !tournament) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-16 text-center">
+        <p className="text-danger mb-4">{loadError ?? 'Tournament not found.'}</p>
+        <Link to="/" className="text-accent hover:underline text-sm">← Back to Home</Link>
+      </div>
     )
   }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
 
-      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      {/* ── HEADER ──────────────────────────────────────────────────────────── */}
       <div className="bg-black/30 rounded-xl p-5 border border-white/10">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <p className="text-xs text-muted/70 uppercase tracking-widest mb-1">Tournament</p>
-            <h1 className="text-2xl font-bold text-white leading-tight">{MOCK_TOURNAMENT.name}</h1>
-            <p className="text-muted text-sm mt-0.5">{MOCK_TOURNAMENT.teamName}</p>
+            <h1 className="text-2xl font-bold text-white leading-tight">{tournament.name}</h1>
+            <p className="text-muted text-sm mt-0.5">{tournament.team.name}</p>
           </div>
 
           {/* Session code */}
@@ -162,7 +183,7 @@ export default function TournamentDashboard() {
                 Session Code
               </p>
               <p className="text-2xl font-mono font-bold tracking-[0.2em] text-accent">
-                {MOCK_TOURNAMENT.sessionCode}
+                {tournament.session.code}
               </p>
             </div>
             <button
@@ -178,20 +199,20 @@ export default function TournamentDashboard() {
         <div className="mt-4 pt-4 border-t border-white/10">
           <p className="text-xs text-muted/70 uppercase tracking-wide mb-2.5">Your Players</p>
           <div className="flex flex-wrap gap-2">
-            {MOCK_TOURNAMENT.players.map(p => (
+            {tournament.team.players.map(p => (
               <div
-                key={p.name}
+                key={p.id}
                 className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-1.5 border border-white/10"
               >
                 <span className="text-white text-sm font-medium">{p.name}</span>
-                <span className="text-muted/60 text-xs">{p.faction}</span>
+                {p.faction && <span className="text-muted/60 text-xs">{p.faction}</span>}
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* ── OPPONENT TEAMS ──────────────────────────────────────────────────── */}
+      {/* ── OPPONENT TEAMS ────────────────────────────────────────────────────── */}
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold text-white">
@@ -213,7 +234,6 @@ export default function TournamentDashboard() {
             const isOpen = expandedTeam === team.id
             return (
               <div key={team.id} className="bg-black/30 rounded-xl border border-white/10 overflow-hidden">
-                {/* Team header row */}
                 <button
                   onClick={() => setExpandedTeam(isOpen ? null : team.id)}
                   className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/5 transition-colors text-left"
@@ -232,19 +252,17 @@ export default function TournamentDashboard() {
                   </svg>
                 </button>
 
-                {/* Expanded players */}
                 {isOpen && (
                   <div className="border-t border-white/10 px-4 py-3">
-                    {/* Column headers */}
                     <div className="hidden sm:grid sm:grid-cols-[1fr_1fr_1fr] gap-2 mb-2 px-0.5">
                       <span className="text-xs text-muted/60 uppercase tracking-wide">Name</span>
                       <span className="text-xs text-muted/60 uppercase tracking-wide">Faction</span>
                       <span className="text-xs text-muted/60 uppercase tracking-wide">Notes</span>
                     </div>
                     <div className="space-y-1.5">
-                      {team.players.map((p, i) => (
+                      {team.players.map((p) => (
                         <div
-                          key={i}
+                          key={p.id}
                           className="sm:grid sm:grid-cols-[1fr_1fr_1fr] sm:gap-2 sm:items-center
                             space-y-0.5 sm:space-y-0 py-1.5 sm:py-1 border-b border-white/5 last:border-0"
                         >
@@ -261,13 +279,19 @@ export default function TournamentDashboard() {
           })}
         </div>
 
-        {/* ── Add Opponent Team form ──────────────────────────────────────── */}
+        {/* ── Add Opponent Team form ────────────────────────────────────────── */}
         {showAddForm && (
           <form
             onSubmit={handleSaveTeam}
             className="mt-3 bg-black/30 rounded-xl border border-accent/30 p-5 space-y-4"
           >
             <h3 className="text-sm font-semibold text-white">New Opponent Team</h3>
+
+            {saveTeamError && (
+              <p className="text-xs text-danger bg-danger/10 border border-danger/20 rounded-lg px-3 py-2">
+                {saveTeamError}
+              </p>
+            )}
 
             <div>
               <label className="block text-xs text-muted mb-1.5">
@@ -336,9 +360,10 @@ export default function TournamentDashboard() {
             <div className="flex gap-2 pt-1">
               <button
                 type="submit"
-                className="px-4 py-2 bg-accent hover:bg-accent/90 text-white text-sm font-semibold rounded-lg transition-colors"
+                disabled={savingTeam}
+                className="px-4 py-2 bg-accent hover:bg-accent/90 disabled:opacity-60 text-white text-sm font-semibold rounded-lg transition-colors"
               >
-                Save Team
+                {savingTeam ? 'Saving…' : 'Save Team'}
               </button>
               <button
                 type="button"
@@ -347,6 +372,7 @@ export default function TournamentDashboard() {
                   setNewName('')
                   setNewPlayers(Array.from({ length: 5 }, emptyPlayer))
                   setFormErrors({ players: Array(5).fill(undefined) })
+                  setSaveTeamError(null)
                 }}
                 className="px-4 py-2 border border-white/10 hover:border-white/25 text-muted hover:text-white text-sm rounded-lg transition-colors"
               >
@@ -357,12 +383,13 @@ export default function TournamentDashboard() {
         )}
       </section>
 
-      {/* ── ROUNDS ─────────────────────────────────────────────────────────── */}
+      {/* ── ROUNDS ──────────────────────────────────────────────────────────── */}
       <section>
         <h2 className="text-base font-semibold text-white mb-3">Rounds</h2>
         <div className="space-y-3">
           {rounds.map(round => {
-            const assigned = opponents.find(o => o.id === round.opponentTeamId)
+            const assigned = opponents.find(o => o.id === round.opponent_team_id)
+            const isAssigning = assigningRound === round.id
             return (
               <div
                 key={round.id}
@@ -370,7 +397,7 @@ export default function TournamentDashboard() {
               >
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
-                    <p className="font-semibold text-white">Round {round.roundNumber}</p>
+                    <p className="font-semibold text-white">Round {round.round_number}</p>
                     <p className="text-sm text-muted mt-0.5">
                       {assigned
                         ? <span>vs <span className="text-white/80">{assigned.name}</span></span>
@@ -379,11 +406,11 @@ export default function TournamentDashboard() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {/* Assignment dropdown */}
                     <select
-                      value={round.opponentTeamId ?? ''}
+                      value={round.opponent_team_id ?? ''}
                       onChange={e => assignOpponent(round.id, e.target.value)}
-                      className="bg-surface border border-white/10 hover:border-white/25 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent transition-colors"
+                      disabled={isAssigning}
+                      className="bg-surface border border-white/10 hover:border-white/25 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-accent transition-colors disabled:opacity-60"
                     >
                       <option value="" className="bg-surface">No opponent</option>
                       {opponents.map(o => (
@@ -391,7 +418,6 @@ export default function TournamentDashboard() {
                       ))}
                     </select>
 
-                    {/* View round link */}
                     {assigned ? (
                       <Link
                         to={`/tournament/${id}/round/${round.id}`}

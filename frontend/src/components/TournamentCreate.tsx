@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useTournaments } from '../store/TournamentContext'
+import { api, ApiError } from '../api/client'
 
 interface PlayerInput {
   name: string
@@ -22,13 +22,6 @@ interface FormErrors {
 }
 
 const emptyPlayer = (): PlayerInput => ({ name: '', faction: '', email: '' })
-
-function generateCode(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-  return Array.from({ length: 6 }, () =>
-    chars[Math.floor(Math.random() * chars.length)]
-  ).join('')
-}
 
 function validate(form: FormState): FormErrors | null {
   const errors: FormErrors = { players: Array(5).fill(undefined) }
@@ -52,15 +45,12 @@ function validate(form: FormState): FormErrors | null {
   return hasErrors ? errors : null
 }
 
-// Shared input class builder
 const inputClass = (hasError?: boolean) =>
   `w-full bg-black/30 border rounded-lg px-3 py-2.5 text-white placeholder-white/20
    focus:outline-none focus:border-accent transition-colors text-sm
    ${hasError ? 'border-danger' : 'border-white/10 hover:border-white/20'}`
 
 export default function TournamentCreate() {
-  const { addTournament } = useTournaments()
-
   const [form, setForm] = useState<FormState>({
     tournamentName: '',
     numRounds: '3',
@@ -68,8 +58,9 @@ export default function TournamentCreate() {
     players: Array.from({ length: 5 }, emptyPlayer),
   })
   const [errors, setErrors] = useState<FormErrors>({ players: Array(5).fill(undefined) })
-  const [sessionCode, setSessionCode] = useState<string | null>(null)
-  const [createdId, setCreatedId] = useState<number | null>(null)
+  const [apiError, setApiError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [created, setCreated] = useState<{ id: number; sessionCode: string } | null>(null)
   const [copied, setCopied] = useState(false)
 
   function clearFieldError(field: keyof Omit<FormErrors, 'players'>) {
@@ -89,41 +80,51 @@ export default function TournamentCreate() {
     }
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const validationErrors = validate(form)
     if (validationErrors) {
       setErrors(validationErrors)
-      // Scroll to first error
       document.querySelector('[data-error]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
     }
 
-    const code = generateCode()
-    const tournament = addTournament({
-      name: form.tournamentName.trim(),
-      num_rounds: parseInt(form.numRounds),
-      team_name: form.teamName.trim(),
-      players: form.players.map(p => ({
-        name: p.name.trim(),
-        faction: p.faction.trim(),
-        email: p.email.trim(),
-      })),
-      session_code: code,
-    })
-    setCreatedId(tournament.id)
-    setSessionCode(code)
+    setLoading(true)
+    setApiError(null)
+    try {
+      const tournament = await api.createTournament({
+        name: form.tournamentName.trim(),
+        num_rounds: parseInt(form.numRounds),
+        team: {
+          name: form.teamName.trim(),
+          players: form.players.map(p => ({
+            name: p.name.trim(),
+            faction: p.faction.trim() || undefined,
+            email: p.email.trim() || undefined,
+          })),
+        },
+      })
+      setCreated({ id: tournament.id, sessionCode: tournament.session.code })
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setApiError(err.message)
+      } else {
+        setApiError('Network error — is the backend running?')
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function handleCopy() {
-    if (!sessionCode) return
-    await navigator.clipboard.writeText(sessionCode)
+    if (!created) return
+    await navigator.clipboard.writeText(created.sessionCode)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // ── Success screen ────────────────────────────────────────────────────────
-  if (sessionCode) {
+  // ── Success screen ────────────────────────────────────────────────────────────
+  if (created) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 text-center">
         <div className="bg-black/30 rounded-2xl p-8 border border-white/10">
@@ -141,7 +142,7 @@ export default function TournamentCreate() {
           <div className="bg-black/50 rounded-xl p-6 mb-6 border border-white/10">
             <p className="text-xs text-muted uppercase tracking-widest mb-3">Session Code</p>
             <p className="text-5xl font-mono font-bold tracking-[0.25em] text-accent select-all">
-              {sessionCode}
+              {created.sessionCode}
             </p>
           </div>
 
@@ -153,7 +154,7 @@ export default function TournamentCreate() {
               {copied ? '✓ Copied!' : 'Copy Code'}
             </button>
             <Link
-              to={`/tournament/${createdId}`}
+              to={`/tournament/${created.id}`}
               className="flex-1 py-3 px-5 rounded-lg bg-accent hover:bg-accent/90 text-white font-medium text-sm text-center transition-colors"
             >
               Go to Dashboard →
@@ -164,7 +165,7 @@ export default function TournamentCreate() {
     )
   }
 
-  // ── Form ──────────────────────────────────────────────────────────────────
+  // ── Form ──────────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-2xl mx-auto px-4 py-10">
       <div className="mb-8">
@@ -174,9 +175,15 @@ export default function TournamentCreate() {
         </p>
       </div>
 
+      {apiError && (
+        <div className="mb-5 bg-danger/10 border border-danger/30 rounded-lg px-4 py-3 text-sm text-danger">
+          {apiError}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
 
-        {/* ── Tournament details ─────────────────────────────────────────── */}
+        {/* ── Tournament details ──────────────────────────────────────────── */}
         <section className="bg-black/30 rounded-xl p-5 border border-white/10 space-y-4">
           <h2 className="text-base font-semibold text-white">Tournament Details</h2>
 
@@ -213,7 +220,7 @@ export default function TournamentCreate() {
           </div>
         </section>
 
-        {/* ── Team details ───────────────────────────────────────────────── */}
+        {/* ── Team details ────────────────────────────────────────────────── */}
         <section className="bg-black/30 rounded-xl p-5 border border-white/10 space-y-4">
           <h2 className="text-base font-semibold text-white">Your Team</h2>
 
@@ -236,7 +243,6 @@ export default function TournamentCreate() {
             )}
           </div>
 
-          {/* Column headers — desktop only */}
           <div className="hidden sm:grid sm:grid-cols-[1fr_1fr_1fr] gap-2 px-0.5">
             <span className="text-xs text-muted/70 uppercase tracking-wide">
               Name <span className="text-accent">*</span>
@@ -245,7 +251,6 @@ export default function TournamentCreate() {
             <span className="text-xs text-muted/70 uppercase tracking-wide">Email</span>
           </div>
 
-          {/* Player rows */}
           <div className="space-y-2">
             {form.players.map((player, i) => (
               <div
@@ -257,11 +262,9 @@ export default function TournamentCreate() {
                     : 'border-white/5 bg-black/20'
                 }`}
               >
-                {/* Mobile: label */}
                 <p className="text-xs font-medium text-muted mb-2 sm:hidden">
                   Player {i + 1}
                 </p>
-
                 <div className="sm:grid sm:grid-cols-[1fr_1fr_1fr] sm:gap-2 space-y-2 sm:space-y-0">
                   <div>
                     <input
@@ -302,9 +305,10 @@ export default function TournamentCreate() {
 
         <button
           type="submit"
-          className="w-full py-3 px-6 bg-accent hover:bg-accent/90 active:scale-[0.99] text-white font-semibold rounded-lg transition-all"
+          disabled={loading}
+          className="w-full py-3 px-6 bg-accent hover:bg-accent/90 active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all"
         >
-          Create Tournament
+          {loading ? 'Creating…' : 'Create Tournament'}
         </button>
       </form>
     </div>

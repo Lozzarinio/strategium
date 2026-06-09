@@ -1,51 +1,10 @@
 import { useState } from 'react'
+import { api, ApiError } from '../api/client'
+import type { SessionDetailOut, RoundDetailOut } from '../api/client'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Screen = 'join' | 'selectPlayer' | 'selectRound' | 'predict' | 'submitted'
-
-interface OpponentPlayer {
-  name: string
-  faction: string
-}
-
-interface Round {
-  id: number
-  roundNumber: number
-  opponent: { name: string; players: OpponentPlayer[] } | null
-}
-
-// ── Mock data ─────────────────────────────────────────────────────────────────
-
-const MOCK_TEAM = {
-  name: 'Fire and Dice',
-  players: ['Alice', 'Bob', 'Carol', 'Dave', 'Eve'],
-}
-
-const MOCK_ROUNDS: Round[] = [
-  {
-    id: 1,
-    roundNumber: 1,
-    opponent: {
-      name: 'Thunder Warriors',
-      players: [
-        { name: 'Enemy1', faction: 'Chaos' },
-        { name: 'Enemy2', faction: 'Orks' },
-        { name: 'Enemy3', faction: 'Necrons' },
-        { name: 'Enemy4', faction: 'Tau' },
-        { name: 'Enemy5', faction: 'Tyranids' },
-      ],
-    },
-  },
-  { id: 2, roundNumber: 2, opponent: null },
-  { id: 3, roundNumber: 3, opponent: null },
-]
-
-// Pre-existing mock submissions from teammates
-const MOCK_PRE_SUBMITTED: Record<string, Record<string, number>> = {
-  Bob: { Enemy1: 12, Enemy2: 15, Enemy3: 10, Enemy4: 18, Enemy5: 14 },
-  Carol: { Enemy1: 16, Enemy2: 11, Enemy3: 13, Enemy4: 15, Enemy5: 12 },
-}
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -60,10 +19,10 @@ function BackButton({ onClick }: { onClick: () => void }) {
   )
 }
 
-// ── Teammates grid (reused in predict + submitted screens) ────────────────────
+// ── Teammates grid ────────────────────────────────────────────────────────────
 
 interface TeammatesViewProps {
-  opponents: OpponentPlayer[]
+  opponents: Array<{ id: number; name: string; faction: string | null }>
   submitted: Record<string, Record<string, number>>
   pending: string[]
   currentPlayer: string
@@ -88,9 +47,9 @@ function TeammatesView({ opponents, submitted, pending, currentPlayer }: Teammat
                 </p>
                 <div className="grid grid-cols-5 gap-1 text-center">
                   {opponents.map(op => (
-                    <div key={op.name}>
+                    <div key={op.id}>
                       <p className="text-[10px] text-muted truncate leading-tight">{op.name}</p>
-                      <p className="text-sm font-mono text-white font-semibold">{preds[op.name]}</p>
+                      <p className="text-sm font-mono text-white font-semibold">{preds[op.name] ?? '—'}</p>
                     </div>
                   ))}
                 </div>
@@ -126,42 +85,66 @@ function TeammatesView({ opponents, submitted, pending, currentPlayer }: Teammat
 export default function PlayerView() {
   const [screen, setScreen] = useState<Screen>('join')
 
+  // Session data (loaded after joining)
+  const [sessionData, setSessionData] = useState<SessionDetailOut | null>(null)
+
   // Join
   const [rawCode, setRawCode] = useState('')
   const [codeError, setCodeError] = useState('')
-  const [sessionCode, setSessionCode] = useState('')
+  const [joinLoading, setJoinLoading] = useState(false)
 
   // Player selection
   const [selectedPlayer, setSelectedPlayer] = useState('')
 
+  // Round selection
+  const [selectedRound, setSelectedRound] = useState<RoundDetailOut | null>(null)
+
   // Prediction
-  const [selectedRound, setSelectedRound] = useState<Round | null>(null)
   const [scores, setScores] = useState<Record<string, string>>({})
   const [scoreErrors, setScoreErrors] = useState<Record<string, string>>({})
+  const [submitLoading, setSubmitLoading] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const [submittedScores, setSubmittedScores] = useState<Record<string, number>>({})
   const [showTeammates, setShowTeammates] = useState(false)
+  const [teammatesPredictions, setTeammatesPredictions] = useState<Record<string, Record<string, number>>>({})
+  const [loadingTeammates, setLoadingTeammates] = useState(false)
 
-  // ── Handlers ────────────────────────────────────────────────────────────────
+  // ── Handlers ──────────────────────────────────────────────────────────────
 
-  function handleJoin(e: React.FormEvent<HTMLFormElement>) {
+  async function handleJoin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const code = rawCode.trim().toUpperCase()
     if (!/^[A-Z0-9]{6}$/.test(code)) {
       setCodeError('Enter a valid 6-character code (letters and numbers)')
       return
     }
-    setSessionCode(code)
-    setScreen('selectPlayer')
+    setJoinLoading(true)
+    setCodeError('')
+    try {
+      const data = await api.getSession(code)
+      setSessionData(data)
+      setScreen('selectPlayer')
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setCodeError('Session not found — check the code and try again.')
+      } else {
+        setCodeError('Could not connect to server — is the backend running?')
+      }
+    } finally {
+      setJoinLoading(false)
+    }
   }
 
-  function handleRoundSelect(round: Round) {
-    if (!round.opponent) return
+  async function handleRoundSelect(round: RoundDetailOut) {
+    if (!round.opponent_team) return
     setSelectedRound(round)
     const initial: Record<string, string> = {}
-    round.opponent.players.forEach(op => { initial[op.name] = '' })
+    round.opponent_team.players.forEach(op => { initial[op.name] = '' })
     setScores(initial)
     setScoreErrors({})
+    setSubmitError(null)
     setShowTeammates(false)
+    setTeammatesPredictions({})
     setScreen('predict')
   }
 
@@ -170,12 +153,13 @@ export default function PlayerView() {
     setScoreErrors(prev => { const e = { ...prev }; delete e[opponentName]; return e })
   }
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (!selectedRound?.opponent) return
+    if (!selectedRound?.opponent_team || !sessionData) return
 
+    const opponents = selectedRound.opponent_team.players
     const errors: Record<string, string> = {}
-    for (const op of selectedRound.opponent.players) {
+    for (const op of opponents) {
       const raw = scores[op.name] ?? ''
       if (raw === '') { errors[op.name] = 'Required'; continue }
       const val = parseFloat(raw)
@@ -185,7 +169,6 @@ export default function PlayerView() {
         errors[op.name] = 'Integers or .5 steps only (e.g. 12.5)'
       }
     }
-
     if (Object.keys(errors).length > 0) {
       setScoreErrors(errors)
       return
@@ -193,21 +176,66 @@ export default function PlayerView() {
 
     const parsed: Record<string, number> = {}
     for (const [k, v] of Object.entries(scores)) parsed[k] = parseFloat(v)
-    setSubmittedScores(parsed)
-    setScreen('submitted')
+
+    setSubmitLoading(true)
+    setSubmitError(null)
+    try {
+      await api.submitPredictions(
+        sessionData.code,
+        selectedPlayer,
+        selectedRound.round_number,
+        parsed,
+      )
+      setSubmittedScores(parsed)
+
+      // Load all teammates' predictions for the "submitted" screen
+      const predsData = await api.getPredictions(selectedRound.id)
+      setTeammatesPredictions(predsData.predictions)
+      setScreen('submitted')
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 400) {
+        setSubmitError(err.message)
+      } else {
+        setSubmitError('Failed to submit — please try again.')
+      }
+    } finally {
+      setSubmitLoading(false)
+    }
   }
 
-  // Players pending at time of prediction (before current player submits)
-  const preSubmittedNames = Object.keys(MOCK_PRE_SUBMITTED)
-  const pendingBeforeSubmit = MOCK_TEAM.players.filter(
+  async function loadTeammatesForPredict() {
+    if (!selectedRound) return
+    setLoadingTeammates(true)
+    try {
+      const data = await api.getPredictions(selectedRound.id)
+      setTeammatesPredictions(data.predictions)
+    } catch {
+      // non-critical — teammates view is optional
+    } finally {
+      setLoadingTeammates(false)
+    }
+  }
+
+  function handleToggleTeammates() {
+    const next = !showTeammates
+    setShowTeammates(next)
+    if (next && Object.keys(teammatesPredictions).length === 0) {
+      void loadTeammatesForPredict()
+    }
+  }
+
+  // ── Computed ───────────────────────────────────────────────────────────────
+
+  const teamPlayers = sessionData?.team.players.map(p => p.name) ?? []
+  const preSubmittedNames = Object.keys(teammatesPredictions).filter(n => n !== selectedPlayer)
+  const pendingBeforeSubmit = teamPlayers.filter(
     p => p !== selectedPlayer && !preSubmittedNames.includes(p)
   )
-  // Players still pending after current player submits
-  const pendingAfterSubmit = MOCK_TEAM.players.filter(
-    p => p !== selectedPlayer && !preSubmittedNames.includes(p)
+  const pendingAfterSubmit = teamPlayers.filter(
+    p => p !== selectedPlayer && !(teammatesPredictions[p])
   )
 
-  // ── Screen: Join ─────────────────────────────────────────────────────────────
+  // ── Screen: Join ──────────────────────────────────────────────────────────
 
   if (screen === 'join') {
     return (
@@ -217,7 +245,7 @@ export default function PlayerView() {
           <p className="text-muted text-sm">Enter the code your captain shared with you.</p>
         </div>
 
-        <form onSubmit={handleJoin} className="space-y-4">
+        <form onSubmit={e => void handleJoin(e)} className="space-y-4">
           <div>
             <input
               type="text"
@@ -243,32 +271,31 @@ export default function PlayerView() {
 
           <button
             type="submit"
-            disabled={rawCode.length !== 6}
+            disabled={rawCode.length !== 6 || joinLoading}
             className="w-full py-3.5 bg-accent hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all text-base"
           >
-            Join Session
+            {joinLoading ? 'Joining…' : 'Join Session'}
           </button>
         </form>
       </div>
     )
   }
 
-  // ── Screen: Select player ─────────────────────────────────────────────────────
+  // ── Screen: Select player ─────────────────────────────────────────────────
 
-  if (screen === 'selectPlayer') {
+  if (screen === 'selectPlayer' && sessionData) {
     return (
       <div className="max-w-sm mx-auto px-4 py-10">
         <BackButton onClick={() => setScreen('join')} />
 
-        {/* Session badge */}
         <div className="bg-black/30 rounded-xl px-4 py-3 border border-white/10 mb-6 flex items-center justify-between">
           <div>
             <p className="text-xs text-muted/70 uppercase tracking-widest">Session</p>
-            <p className="text-lg font-mono font-bold text-accent tracking-widest">{sessionCode}</p>
+            <p className="text-lg font-mono font-bold text-accent tracking-widest">{sessionData.code}</p>
           </div>
           <div className="text-right">
             <p className="text-xs text-muted/70">Team</p>
-            <p className="text-sm text-white font-medium">{MOCK_TEAM.name}</p>
+            <p className="text-sm text-white font-medium">{sessionData.team.name}</p>
           </div>
         </div>
 
@@ -277,19 +304,19 @@ export default function PlayerView() {
 
         <form onSubmit={e => { e.preventDefault(); if (selectedPlayer) setScreen('selectRound') }}>
           <div className="space-y-2 mb-4">
-            {MOCK_TEAM.players.map(player => (
+            {sessionData.team.players.map(player => (
               <button
-                key={player}
+                key={player.id}
                 type="button"
-                onClick={() => setSelectedPlayer(player)}
+                onClick={() => setSelectedPlayer(player.name)}
                 className={`w-full text-left px-4 py-3.5 rounded-xl border transition-all font-medium flex items-center justify-between ${
-                  selectedPlayer === player
+                  selectedPlayer === player.name
                     ? 'border-accent bg-accent/10 text-white'
                     : 'border-white/10 bg-black/20 text-muted hover:border-white/25 hover:text-white'
                 }`}
               >
-                <span>{player}</span>
-                {selectedPlayer === player && (
+                <span>{player.name}</span>
+                {selectedPlayer === player.name && (
                   <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
@@ -310,9 +337,9 @@ export default function PlayerView() {
     )
   }
 
-  // ── Screen: Select round ──────────────────────────────────────────────────────
+  // ── Screen: Select round ──────────────────────────────────────────────────
 
-  if (screen === 'selectRound') {
+  if (screen === 'selectRound' && sessionData) {
     return (
       <div className="max-w-sm mx-auto px-4 py-10">
         <BackButton onClick={() => setScreen('selectPlayer')} />
@@ -323,12 +350,12 @@ export default function PlayerView() {
         </div>
 
         <div className="space-y-3">
-          {MOCK_ROUNDS.map(round => {
-            const hasOpponent = !!round.opponent
+          {sessionData.rounds.map(round => {
+            const hasOpponent = !!round.opponent_team
             return (
               <button
                 key={round.id}
-                onClick={() => handleRoundSelect(round)}
+                onClick={() => void handleRoundSelect(round)}
                 disabled={!hasOpponent}
                 className={`w-full text-left rounded-xl border px-4 py-4 transition-all ${
                   hasOpponent
@@ -339,11 +366,11 @@ export default function PlayerView() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className={`font-semibold text-sm ${hasOpponent ? 'text-white' : 'text-muted'}`}>
-                      Round {round.roundNumber}
+                      Round {round.round_number}
                     </p>
                     <p className="text-sm text-muted mt-0.5">
                       {hasOpponent
-                        ? <span>vs <span className="text-white/80">{round.opponent!.name}</span></span>
+                        ? <span>vs <span className="text-white/80">{round.opponent_team!.name}</span></span>
                         : 'No opponent assigned yet'
                       }
                     </p>
@@ -361,9 +388,14 @@ export default function PlayerView() {
     )
   }
 
-  // ── Screen: Predict ───────────────────────────────────────────────────────────
+  // ── Screen: Predict ───────────────────────────────────────────────────────
 
-  if (screen === 'predict' && selectedRound?.opponent) {
+  if (screen === 'predict' && selectedRound?.opponent_team && sessionData) {
+    const opponents = selectedRound.opponent_team.players
+    const preSubmittedForDisplay = Object.fromEntries(
+      Object.entries(teammatesPredictions).filter(([name]) => name !== selectedPlayer)
+    )
+
     return (
       <div className="max-w-sm mx-auto px-4 py-10">
         <BackButton onClick={() => setScreen('selectRound')} />
@@ -372,24 +404,24 @@ export default function PlayerView() {
           <h2 className="text-xl font-bold text-white leading-tight">
             {selectedPlayer}
             <span className="text-muted font-normal"> vs </span>
-            {selectedRound.opponent.name}
+            {selectedRound.opponent_team.name}
           </h2>
           <p className="text-muted text-sm mt-1">
-            Round {selectedRound.roundNumber} · Predict your score against each opponent (0–20, half-points ok).
+            Round {selectedRound.round_number} · Predict your score against each opponent (0–20, half-points ok).
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-2 mb-6">
-          {selectedRound.opponent.players.map(op => (
+        <form onSubmit={e => void handleSubmit(e)} className="space-y-2 mb-6">
+          {opponents.map(op => (
             <div
-              key={op.name}
+              key={op.id}
               className={`flex items-center gap-3 bg-black/30 rounded-xl px-4 py-3 border transition-colors ${
                 scoreErrors[op.name] ? 'border-danger/50' : 'border-white/10'
               }`}
             >
               <div className="flex-1 min-w-0">
                 <p className="text-white text-sm font-medium leading-tight">{op.name}</p>
-                <p className="text-muted text-xs">{op.faction}</p>
+                {op.faction && <p className="text-muted text-xs">{op.faction}</p>}
                 {scoreErrors[op.name] && (
                   <p className="text-danger text-xs mt-0.5">{scoreErrors[op.name]}</p>
                 )}
@@ -415,11 +447,16 @@ export default function PlayerView() {
             </div>
           ))}
 
+          {submitError && (
+            <p className="text-danger text-sm py-1">{submitError}</p>
+          )}
+
           <button
             type="submit"
-            className="w-full mt-4 py-3.5 bg-accent hover:bg-accent/90 active:scale-[0.99] text-white font-semibold rounded-lg transition-all"
+            disabled={submitLoading}
+            className="w-full mt-4 py-3.5 bg-accent hover:bg-accent/90 active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-all"
           >
-            Submit Predictions
+            {submitLoading ? 'Submitting…' : 'Submit Predictions'}
           </button>
         </form>
 
@@ -427,14 +464,16 @@ export default function PlayerView() {
         <div className="border border-white/10 rounded-xl overflow-hidden">
           <button
             type="button"
-            onClick={() => setShowTeammates(p => !p)}
+            onClick={handleToggleTeammates}
             className="w-full flex items-center justify-between px-4 py-3 text-sm text-muted hover:text-white transition-colors"
           >
             <span>
-              Team submissions · Round {selectedRound.roundNumber}
-              <span className="ml-2 text-xs opacity-60">
-                ({preSubmittedNames.length}/5 submitted)
-              </span>
+              Team submissions · Round {selectedRound.round_number}
+              {!loadingTeammates && Object.keys(teammatesPredictions).length > 0 && (
+                <span className="ml-2 text-xs opacity-60">
+                  ({Object.keys(teammatesPredictions).length}/5 submitted)
+                </span>
+              )}
             </span>
             <svg
               className={`w-4 h-4 transition-transform ${showTeammates ? 'rotate-180' : ''}`}
@@ -445,26 +484,30 @@ export default function PlayerView() {
           </button>
 
           {showTeammates && (
-            <TeammatesView
-              opponents={selectedRound.opponent.players}
-              submitted={MOCK_PRE_SUBMITTED}
-              pending={pendingBeforeSubmit}
-              currentPlayer={selectedPlayer}
-            />
+            loadingTeammates ? (
+              <div className="px-4 py-3 text-sm text-muted/60">Loading…</div>
+            ) : (
+              <TeammatesView
+                opponents={opponents}
+                submitted={preSubmittedForDisplay}
+                pending={pendingBeforeSubmit}
+                currentPlayer={selectedPlayer}
+              />
+            )
           )}
         </div>
       </div>
     )
   }
 
-  // ── Screen: Submitted ─────────────────────────────────────────────────────────
+  // ── Screen: Submitted ─────────────────────────────────────────────────────
 
-  if (screen === 'submitted' && selectedRound?.opponent) {
-    const allSubmitted = { ...MOCK_PRE_SUBMITTED, [selectedPlayer]: submittedScores }
+  if (screen === 'submitted' && selectedRound?.opponent_team && sessionData) {
+    const opponents = selectedRound.opponent_team.players
+    const allSubmitted = { ...teammatesPredictions, [selectedPlayer]: submittedScores }
 
     return (
       <div className="max-w-sm mx-auto px-4 py-10">
-        {/* Success header */}
         <div className="text-center mb-7">
           <div className="w-14 h-14 rounded-full bg-success/20 border border-success/40 flex items-center justify-center mx-auto mb-4">
             <svg className="w-7 h-7 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -473,23 +516,22 @@ export default function PlayerView() {
           </div>
           <h2 className="text-2xl font-bold text-white mb-1">Predictions Submitted!</h2>
           <p className="text-muted text-sm">
-            {selectedPlayer} · Round {selectedRound.roundNumber} vs {selectedRound.opponent.name}
+            {selectedPlayer} · Round {selectedRound.round_number} vs {selectedRound.opponent_team.name}
           </p>
         </div>
 
-        {/* Your predictions read-only */}
         <div className="bg-black/30 rounded-xl border border-white/10 overflow-hidden mb-5">
           <div className="px-4 py-2.5 border-b border-white/10">
             <p className="text-sm font-semibold text-white">Your Predictions</p>
           </div>
-          {selectedRound.opponent.players.map(op => (
+          {opponents.map(op => (
             <div
-              key={op.name}
+              key={op.id}
               className="flex items-center justify-between px-4 py-2.5 border-b border-white/5 last:border-0"
             >
               <div>
                 <span className="text-white text-sm">{op.name}</span>
-                <span className="text-muted text-xs ml-2">{op.faction}</span>
+                {op.faction && <span className="text-muted text-xs ml-2">{op.faction}</span>}
               </div>
               <span className="font-mono font-bold text-accent">
                 {submittedScores[op.name]}
@@ -499,7 +541,6 @@ export default function PlayerView() {
           ))}
         </div>
 
-        {/* Full team status */}
         <div className="border border-white/10 rounded-xl overflow-hidden mb-5">
           <div className="px-4 py-2.5 border-b border-white/10">
             <p className="text-sm font-semibold text-white">
@@ -510,7 +551,7 @@ export default function PlayerView() {
             </p>
           </div>
           <TeammatesView
-            opponents={selectedRound.opponent.players}
+            opponents={opponents}
             submitted={allSubmitted}
             pending={pendingAfterSubmit}
             currentPlayer={selectedPlayer}
@@ -518,7 +559,10 @@ export default function PlayerView() {
         </div>
 
         <button
-          onClick={() => setScreen('selectRound')}
+          onClick={() => {
+            setScreen('selectRound')
+            setTeammatesPredictions({})
+          }}
           className="w-full py-3 border border-white/15 hover:border-white/30 text-white rounded-lg transition-colors text-sm"
         >
           ← Back to Rounds

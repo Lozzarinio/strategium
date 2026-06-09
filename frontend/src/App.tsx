@@ -1,5 +1,4 @@
 import { Routes, Route, Link, NavLink } from 'react-router-dom'
-import { TournamentProvider } from './store/TournamentContext'
 import HomePage from './components/HomePage'
 import TournamentCreate from './components/TournamentCreate'
 import TournamentDashboard from './components/TournamentDashboard'
@@ -29,7 +28,6 @@ function NavBar() {
 
 export default function App() {
   return (
-    <TournamentProvider>
     <div className="min-h-screen flex flex-col">
       <NavBar />
       <main className="flex-1">
@@ -43,6 +41,5 @@ export default function App() {
         </Routes>
       </main>
     </div>
-    </TournamentProvider>
   )
 }
