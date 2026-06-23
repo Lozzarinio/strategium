@@ -10,6 +10,29 @@ type PredRow = Record<string, number>
 type PredMatrix = Record<string, PredRow | null>
 type OptimizerState = 'idle' | 'loading' | 'results' | 'error'
 
+// ── Info tooltip ──────────────────────────────────────────────────────────────
+
+function InfoTooltip({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex items-center ml-1.5 align-middle">
+      <svg
+        className="w-3.5 h-3.5 text-muted/50 hover:text-muted cursor-help"
+        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 16v-4m0-3.5h.01" />
+      </svg>
+      <span
+        className="pointer-events-none absolute z-10 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56
+          rounded-lg border border-white/10 bg-black/90 px-3 py-2 text-xs text-muted
+          opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        {text}
+      </span>
+    </span>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function isRowComplete(row: PredRow | null, opponents: Array<{ name: string }>): boolean {
@@ -20,6 +43,7 @@ function isRowComplete(row: PredRow | null, opponents: Array<{ name: string }>):
 // Stores optimizer context in localStorage so the wizard can load it.
 function storeOptimizerContext(
   roundId: string,
+  roundNumber: number,
   optimizationResult: OptimizationResult,
   yourPlayers: string[],
   oppPlayers: string[],
@@ -28,7 +52,7 @@ function storeOptimizerContext(
   try {
     localStorage.setItem(
       `strategium-optimizer-${roundId}`,
-      JSON.stringify({ optimizationResult, yourPlayers, oppPlayers, predictions }),
+      JSON.stringify({ optimizationResult, roundNumber, yourPlayers, oppPlayers, predictions }),
     )
   } catch { /* ignore storage errors */ }
 }
@@ -153,7 +177,7 @@ export default function RoundDetail() {
       const oppPlayers = roundData.opponent_team.players.map(p => p.name)
       const predsCopy: PredMatrix = {}
       yourPlayers.forEach(name => { predsCopy[name] = predictions[name] ?? null })
-      storeOptimizerContext(roundId, result, yourPlayers, oppPlayers, predsCopy)
+      storeOptimizerContext(roundId, roundData.round_number, result, yourPlayers, oppPlayers, predsCopy)
     } catch (err) {
       setOptimizerState('error')
       setOptimizerError(
@@ -429,11 +453,19 @@ export default function RoundDetail() {
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="bg-black/40 rounded-xl p-4 border border-accent/30">
-                <p className="text-xs text-muted/70 uppercase tracking-wide mb-1">Recommended Defender</p>
+                <p className="text-xs text-muted/70 uppercase tracking-wide mb-1 flex items-center">
+                  Recommended Defender
+                </p>
                 <p className="text-2xl font-bold text-accent">{recommendedDefender?.player}</p>
+                <p className="text-xs text-muted/60 mt-0.5">
+                  Based on maximising your guaranteed minimum score (worst case).
+                </p>
               </div>
               <div className="bg-black/40 rounded-xl p-4 border border-white/10">
-                <p className="text-xs text-muted/70 uppercase tracking-wide mb-1">Worst Case Score</p>
+                <p className="text-xs text-muted/70 uppercase tracking-wide mb-1 flex items-center">
+                  Worst Case Score
+                  <InfoTooltip text="The minimum score you're guaranteed, even if the opponent makes the best possible moves against you. This is what the recommendation is based on." />
+                </p>
                 <p className="text-2xl font-bold text-white font-mono">
                   {recommendedDefender?.worst_case_total}
                   <span className="text-sm text-muted font-normal ml-1">pts</span>
@@ -441,7 +473,10 @@ export default function RoundDetail() {
                 <p className="text-xs text-muted/60 mt-0.5">Guaranteed minimum</p>
               </div>
               <div className="bg-black/40 rounded-xl p-4 border border-white/10">
-                <p className="text-xs text-muted/70 uppercase tracking-wide mb-1">Best Case Score</p>
+                <p className="text-xs text-muted/70 uppercase tracking-wide mb-1 flex items-center">
+                  Best Case Score
+                  <InfoTooltip text="The score you'd achieve if the opponent made the worst possible moves for themselves. Useful as an upper bound but not something you can rely on." />
+                </p>
                 <p className="text-2xl font-bold text-white font-mono">
                   {recommendedDefender?.best_case_total}
                   <span className="text-sm text-muted font-normal ml-1">pts</span>

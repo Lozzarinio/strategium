@@ -42,6 +42,16 @@ export default function TournamentDashboard() {
   const [savingTeam, setSavingTeam] = useState(false)
   const [saveTeamError, setSaveTeamError] = useState<string | null>(null)
 
+  // Edit opponent form state
+  const [editingTeam, setEditingTeam] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editPlayers, setEditPlayers] = useState<OpponentPlayerInput[]>(Array.from({ length: 5 }, emptyPlayer))
+  const [editErrors, setEditErrors] = useState<{ name?: string; players: Array<string | undefined> }>({
+    players: Array(5).fill(undefined),
+  })
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [saveEditError, setSaveEditError] = useState<string | null>(null)
+
   // Round assignment state
   const [assigningRound, setAssigningRound] = useState<number | null>(null)
 
@@ -122,6 +132,82 @@ export default function TournamentDashboard() {
       )
     } finally {
       setSavingTeam(false)
+    }
+  }
+
+  function startEditTeam(team: OpponentTeamOut) {
+    setEditingTeam(team.id)
+    setExpandedTeam(team.id)
+    setEditName(team.name)
+    setEditPlayers(
+      Array.from({ length: 5 }, (_, i) => {
+        const p = team.players[i]
+        return p
+          ? { name: p.name, faction: p.faction ?? '', notes: p.notes ?? '' }
+          : emptyPlayer()
+      })
+    )
+    setEditErrors({ players: Array(5).fill(undefined) })
+    setSaveEditError(null)
+  }
+
+  function cancelEditTeam() {
+    setEditingTeam(null)
+    setSaveEditError(null)
+  }
+
+  function updateEditPlayer(i: number, field: keyof OpponentPlayerInput, val: string) {
+    setEditPlayers(prev => prev.map((p, idx) => idx === i ? { ...p, [field]: val } : p))
+    if (field === 'name') {
+      setEditErrors(prev => ({
+        ...prev,
+        players: prev.players.map((e, idx) => idx === i ? undefined : e),
+      }))
+    }
+  }
+
+  async function handleSaveEdit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (editingTeam === null) return
+    const errors: typeof editErrors = { players: Array(5).fill(undefined) }
+    let bad = false
+    if (!editName.trim()) { errors.name = 'Team name is required'; bad = true }
+    editPlayers.forEach((p, i) => {
+      if (!p.name.trim()) { errors.players[i] = 'Required'; bad = true }
+    })
+    if (bad) { setEditErrors(errors); return }
+
+    setSavingEdit(true)
+    setSaveEditError(null)
+    try {
+      const updated = await api.updateOpponentTeam(editingTeam, {
+        name: editName.trim(),
+        players: editPlayers.map(p => ({
+          name: p.name.trim(),
+          faction: p.faction.trim() || undefined,
+          notes: p.notes.trim() || undefined,
+        })),
+      })
+      setOpponents(prev => prev.map(o => o.id === updated.id ? updated : o))
+      setEditingTeam(null)
+    } catch (err) {
+      setSaveEditError(
+        err instanceof ApiError ? err.message : 'Failed to save changes — please try again.'
+      )
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  async function handleDeleteTeam(teamId: number) {
+    if (!confirm('Delete this opponent team? This cannot be undone.')) return
+    try {
+      await api.deleteOpponentTeam(teamId)
+      setOpponents(prev => prev.filter(o => o.id !== teamId))
+      if (editingTeam === teamId) setEditingTeam(null)
+      if (expandedTeam === teamId) setExpandedTeam(null)
+    } catch (err) {
+      console.error('Failed to delete opponent team:', err)
     }
   }
 
@@ -234,25 +320,134 @@ export default function TournamentDashboard() {
             const isOpen = expandedTeam === team.id
             return (
               <div key={team.id} className="bg-black/30 rounded-xl border border-white/10 overflow-hidden">
-                <button
-                  onClick={() => setExpandedTeam(isOpen ? null : team.id)}
-                  className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/5 transition-colors text-left"
-                >
-                  <div className="flex items-center gap-3">
+                <div className="w-full flex items-center justify-between px-4 py-3.5 hover:bg-white/5 transition-colors">
+                  <button
+                    onClick={() => setExpandedTeam(isOpen ? null : team.id)}
+                    className="flex items-center gap-3 text-left flex-1"
+                  >
                     <span className="font-semibold text-white">{team.name}</span>
                     <span className="text-xs text-muted bg-white/10 rounded-full px-2 py-0.5">
                       {team.players.length} players
                     </span>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => startEditTeam(team)}
+                      className="text-xs px-2.5 py-1 rounded-lg border border-white/10 hover:border-accent/50 text-muted hover:text-accent transition-colors font-medium"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => void handleDeleteTeam(team.id)}
+                      className="text-xs px-2.5 py-1 rounded-lg border border-white/10 hover:border-danger/50 text-muted hover:text-danger transition-colors font-medium"
+                    >
+                      Delete
+                    </button>
+                    <button onClick={() => setExpandedTeam(isOpen ? null : team.id)}>
+                      <svg
+                        className={`w-4 h-4 text-muted transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
                   </div>
-                  <svg
-                    className={`w-4 h-4 text-muted transition-transform ${isOpen ? 'rotate-180' : ''}`}
-                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
+                </div>
 
-                {isOpen && (
+                {isOpen && editingTeam === team.id && (
+                  <form
+                    onSubmit={handleSaveEdit}
+                    className="border-t border-accent/30 px-4 py-3 space-y-4"
+                  >
+                    {saveEditError && (
+                      <p className="text-xs text-danger bg-danger/10 border border-danger/20 rounded-lg px-3 py-2">
+                        {saveEditError}
+                      </p>
+                    )}
+
+                    <div>
+                      <label className="block text-xs text-muted mb-1.5">
+                        Team Name <span className="text-accent">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={editName}
+                        onChange={e => { setEditName(e.target.value); setEditErrors(p => ({ ...p, name: undefined })) }}
+                        className={inputCls(!!editErrors.name)}
+                      />
+                      {editErrors.name && <p className="mt-1 text-xs text-danger">{editErrors.name}</p>}
+                    </div>
+
+                    <div>
+                      <div className="hidden sm:grid sm:grid-cols-[1fr_1fr_1.5fr] gap-2 mb-2 px-0.5">
+                        <span className="text-xs text-muted/60 uppercase tracking-wide">
+                          Name <span className="text-accent">*</span>
+                        </span>
+                        <span className="text-xs text-muted/60 uppercase tracking-wide">Faction</span>
+                        <span className="text-xs text-muted/60 uppercase tracking-wide">Notes</span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {editPlayers.map((p, i) => (
+                          <div
+                            key={i}
+                            className={`rounded-lg border p-2.5 transition-colors
+                              ${editErrors.players[i] ? 'border-danger/40 bg-danger/5' : 'border-white/5 bg-black/20'}`}
+                          >
+                            <p className="text-xs text-muted mb-1.5 sm:hidden">Player {i + 1}</p>
+                            <div className="sm:grid sm:grid-cols-[1fr_1fr_1.5fr] sm:gap-2 space-y-1.5 sm:space-y-0">
+                              <div>
+                                <input
+                                  type="text"
+                                  value={p.name}
+                                  onChange={e => updateEditPlayer(i, 'name', e.target.value)}
+                                  placeholder={`Player ${i + 1}`}
+                                  className={inputCls(!!editErrors.players[i])}
+                                />
+                                {editErrors.players[i] && (
+                                  <p className="mt-0.5 text-xs text-danger">{editErrors.players[i]}</p>
+                                )}
+                              </div>
+                              <input
+                                type="text"
+                                value={p.faction}
+                                onChange={e => updateEditPlayer(i, 'faction', e.target.value)}
+                                placeholder="Faction"
+                                className={inputCls()}
+                              />
+                              <input
+                                type="text"
+                                value={p.notes}
+                                onChange={e => updateEditPlayer(i, 'notes', e.target.value)}
+                                placeholder="Notes (optional)"
+                                className={inputCls()}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="submit"
+                        disabled={savingEdit}
+                        className="px-4 py-2 bg-accent hover:bg-accent/90 disabled:opacity-60 text-white text-sm font-semibold rounded-lg transition-colors"
+                      >
+                        {savingEdit ? 'Saving…' : 'Save Changes'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelEditTeam}
+                        className="px-4 py-2 border border-white/10 hover:border-white/25 text-muted hover:text-white text-sm rounded-lg transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {isOpen && editingTeam !== team.id && (
                   <div className="border-t border-white/10 px-4 py-3">
                     <div className="hidden sm:grid sm:grid-cols-[1fr_1fr_1fr] gap-2 mb-2 px-0.5">
                       <span className="text-xs text-muted/60 uppercase tracking-wide">Name</span>

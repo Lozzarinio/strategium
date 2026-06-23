@@ -16,6 +16,7 @@ import Step8 from './Step8'
 
 interface OptimizerContext {
   optimizationResult: OptimizationResult
+  roundNumber: number
   yourPlayers: string[]
   oppPlayers: string[]
   predictions: Record<string, Record<string, number> | null>
@@ -62,7 +63,7 @@ export default function PairingWizard() {
     )
   }
 
-  const { optimizationResult, yourPlayers, oppPlayers, predictions } = ctx
+  const { optimizationResult, roundNumber, yourPlayers, oppPlayers, predictions } = ctx
 
   // Normalise predictions: null rows → empty objects
   const normPredictions: Record<string, Record<string, number>> = {}
@@ -74,6 +75,7 @@ export default function PairingWizard() {
     <WizardInner
       id={id!}
       roundId={roundId!}
+      roundNumber={roundNumber}
       optimizationResult={optimizationResult}
       yourPlayers={yourPlayers}
       oppPlayers={oppPlayers}
@@ -87,6 +89,7 @@ export default function PairingWizard() {
 interface WizardInnerProps {
   id: string
   roundId: string
+  roundNumber: number
   optimizationResult: OptimizationResult
   yourPlayers: string[]
   oppPlayers: string[]
@@ -94,7 +97,7 @@ interface WizardInnerProps {
 }
 
 function WizardInner({
-  id, roundId, optimizationResult, yourPlayers, oppPlayers, predictions,
+  id, roundId, roundNumber, optimizationResult, yourPlayers, oppPlayers, predictions,
 }: WizardInnerProps) {
   const wizard = useWizardState(
     optimizationResult,
@@ -120,7 +123,7 @@ function WizardInner({
           to={`/tournament/${id}/round/${roundId}`}
           className="hover:text-white transition-colors"
         >
-          Round {roundId}
+          Round {roundNumber}
         </Link>
         <span>/</span>
         <span className="text-white">Pairing Wizard</span>
@@ -130,7 +133,7 @@ function WizardInner({
       <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Pairing Wizard</h1>
-          <p className="text-sm text-muted mt-0.5">Round {roundId}</p>
+          <p className="text-sm text-muted mt-0.5">Round {roundNumber}</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -162,7 +165,7 @@ function WizardInner({
         {step === 1 && <Step1 wizard={wizard} yourPlayers={yourPlayers} />}
         {step === 2 && <Step2 wizard={wizard} oppPlayers={oppPlayers} />}
         {step === 3 && <Step3 wizard={wizard} yourPlayers={yourPlayers} />}
-        {step === 4 && <Step4 wizard={wizard} oppPlayers={oppPlayers} />}
+        {step === 4 && <Step4 wizard={wizard} yourPlayers={yourPlayers} oppPlayers={oppPlayers} />}
         {step === 5 && <Step5 wizard={wizard} />}
         {step === 6 && <Step6 wizard={wizard} />}
         {step === 7 && <Step7 wizard={wizard} />}
