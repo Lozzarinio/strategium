@@ -54,6 +54,7 @@ app.add_middleware(
 @app.on_event("startup")
 def create_tables() -> None:
     Base.metadata.create_all(bind=engine)
+    print(f"[CORS] allow_origins = {CORS_ORIGINS}")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
