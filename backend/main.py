@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 import models
 import optimizer as _optimizer
 import schemas
-from database import Base, engine, get_db
+from database import Base, DATABASE_URL, engine, get_db
 
 load_dotenv()
 
@@ -53,7 +53,9 @@ app.add_middleware(
 
 @app.on_event("startup")
 def create_tables() -> None:
+    print(f"[DB] connecting to: {DATABASE_URL[:40]}...")
     Base.metadata.create_all(bind=engine)
+    print(f"[DB] tables created/verified OK")
     print(f"[CORS] allow_origins = {CORS_ORIGINS}")
 
 
