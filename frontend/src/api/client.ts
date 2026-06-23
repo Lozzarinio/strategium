@@ -5,9 +5,11 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/
 // ── Error type ────────────────────────────────────────────────────────────────
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  readonly status: number
+  constructor(status: number, message: string) {
     super(message)
     this.name = 'ApiError'
+    this.status = status
   }
 }
 
