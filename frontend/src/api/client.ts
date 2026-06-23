@@ -13,23 +13,74 @@ export class ApiError extends Error {
   }
 }
 
+// ── Wake-up state tracking ────────────────────────────────────────────────────
+// Notifies subscribers when any request takes >3 seconds without a response,
+// indicating the Render backend may be cold-starting.
+
+type WakeUpListener = (waking: boolean) => void
+const wakeUpListeners = new Set<WakeUpListener>()
+let slowRequestCount = 0
+
+export function onWakeUpChange(fn: WakeUpListener): () => void {
+  wakeUpListeners.add(fn)
+  return () => wakeUpListeners.delete(fn)
+}
+
+function notifyWakeUp(delta: 1 | -1) {
+  slowRequestCount = Math.max(0, slowRequestCount + delta)
+  const waking = slowRequestCount > 0
+  for (const fn of wakeUpListeners) fn(waking)
+}
+
 // ── Core request helper ───────────────────────────────────────────────────────
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  if (!res.ok) {
-    let detail = res.statusText
-    try {
-      const body = await res.json()
-      detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body)
-    } catch { /* ignore */ }
-    throw new ApiError(res.status, detail)
+  let isSlowRequest = false
+  let timedOut = false
+  const controller = new AbortController()
+
+  const wakeTimer = setTimeout(() => {
+    isSlowRequest = true
+    notifyWakeUp(1)
+  }, 3000)
+
+  const timeoutTimer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, 45_000)
+
+  const finish = () => {
+    clearTimeout(wakeTimer)
+    clearTimeout(timeoutTimer)
+    if (isSlowRequest) notifyWakeUp(-1)
   }
-  if (res.status === 204) return undefined as T
-  return res.json()
+
+  try {
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+      signal: controller.signal,
+    })
+    finish()
+
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const body = await res.json()
+        detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body)
+      } catch { /* ignore */ }
+      throw new ApiError(res.status, detail)
+    }
+    if (res.status === 204) return undefined as T
+    return res.json()
+  } catch (err) {
+    finish()
+    if (err instanceof ApiError) throw err
+    if (timedOut) {
+      throw new ApiError(0, 'The server is taking longer than expected. Please refresh the page.')
+    }
+    throw new ApiError(0, 'Unable to reach the server. Please try again in a moment.')
+  }
 }
 
 // ── Response types (matching backend schemas) ─────────────────────────────────

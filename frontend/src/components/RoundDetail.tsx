@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
+import { useIsOwner } from '../hooks/useOwnership'
 import type { RoundDetailOut, TournamentOut } from '../api/client'
 import type { OptimizationResult } from '../types/optimization'
 
@@ -61,6 +62,17 @@ function storeOptimizerContext(
 
 export default function RoundDetail() {
   const { id, roundId } = useParams<{ id: string; roundId: string }>()
+  const navigate = useNavigate()
+  const isOwner = useIsOwner(id)
+
+  useEffect(() => {
+    if (!isOwner) {
+      navigate('/captain', {
+        state: { message: 'Tournament not found or you don\'t have access.' },
+        replace: true,
+      })
+    }
+  }, [isOwner, navigate])
 
   // Remote data
   const [roundData, setRoundData] = useState<RoundDetailOut | null>(null)
@@ -185,6 +197,8 @@ export default function RoundDetail() {
       )
     }
   }
+
+  if (!isOwner) return null
 
   // ── Loading / error states ────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
+import { addMyTournamentId } from '../hooks/useOwnership'
 
 interface PlayerInput {
   name: string
@@ -104,6 +105,7 @@ export default function TournamentCreate() {
           })),
         },
       })
+      addMyTournamentId(tournament.id)
       setCreated({ id: tournament.id, sessionCode: tournament.session.code })
     } catch (err) {
       if (err instanceof ApiError) {

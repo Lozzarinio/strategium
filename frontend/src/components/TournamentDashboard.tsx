@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import type { TournamentOut, OpponentTeamOut, RoundOut } from '../api/client'
+import { useIsOwner } from '../hooks/useOwnership'
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
@@ -22,6 +23,17 @@ const emptyPlayer = (): OpponentPlayerInput => ({ name: '', faction: '', notes: 
 
 export default function TournamentDashboard() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const isOwner = useIsOwner(id)
+
+  useEffect(() => {
+    if (!isOwner) {
+      navigate('/captain', {
+        state: { message: 'Tournament not found or you don\'t have access.' },
+        replace: true,
+      })
+    }
+  }, [isOwner, navigate])
 
   const [tournament, setTournament] = useState<TournamentOut | null>(null)
   const [opponents, setOpponents] = useState<OpponentTeamOut[]>([])
@@ -225,6 +237,8 @@ export default function TournamentDashboard() {
     }
   }
 
+  if (!isOwner) return null
+
   // ── Loading / error states ────────────────────────────────────────────────
 
   if (loading) {
@@ -245,7 +259,7 @@ export default function TournamentDashboard() {
     return (
       <div className="max-w-4xl mx-auto px-4 py-16 text-center">
         <p className="text-danger mb-4">{loadError ?? 'Tournament not found.'}</p>
-        <Link to="/" className="text-accent hover:underline text-sm">← Back to Home</Link>
+        <Link to="/captain" className="text-accent hover:underline text-sm">← Back to My Tournaments</Link>
       </div>
     )
   }
