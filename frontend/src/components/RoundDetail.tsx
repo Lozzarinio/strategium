@@ -4,6 +4,7 @@ import { api, ApiError } from '../api/client'
 import { useIsOwner } from '../hooks/useOwnership'
 import type { RoundDetailOut, TournamentOut } from '../api/client'
 import type { OptimizationResult } from '../types/optimization'
+import { getScoreColor } from '../utils/scores'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -359,7 +360,7 @@ export default function RoundDetail() {
                             <span
                               className={`text-sm font-mono font-semibold transition-colors ${
                                 score !== undefined
-                                  ? 'text-white group-hover:text-accent'
+                                  ? getScoreColor(score)
                                   : 'text-muted/30'
                               }`}
                             >

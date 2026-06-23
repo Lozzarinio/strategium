@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api, ApiError } from '../api/client'
 import type { SessionDetailOut, RoundDetailOut } from '../api/client'
+import { getScoreColor } from '../utils/scores'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -49,7 +50,11 @@ function TeammatesView({ opponents, submitted, pending, currentPlayer }: Teammat
                   {opponents.map(op => (
                     <div key={op.id}>
                       <p className="text-[10px] text-muted truncate leading-tight">{op.name}</p>
-                      <p className="text-sm font-mono text-white font-semibold">{preds[op.name] ?? '—'}</p>
+                      <p className={`text-sm font-mono font-semibold ${
+                        preds[op.name] !== undefined ? getScoreColor(preds[op.name]) : 'text-muted/40'
+                      }`}>
+                        {preds[op.name] ?? '—'}
+                      </p>
                     </div>
                   ))}
                 </div>
