@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useWizardState } from '../../hooks/useWizardState'
-import { useIsOwner } from '../../hooks/useOwnership'
+import { useHasCaptainAccess } from '../../hooks/useCaptainAccess'
 import type { OptimizationResult } from '../../types/optimization'
 import ProgressStepper from './ProgressStepper'
 import Step1 from './Step1'
@@ -38,23 +38,23 @@ function loadOptimizerContext(roundId: string): OptimizerContext | null {
 export default function PairingWizard() {
   const { id, roundId } = useParams<{ id: string; roundId: string }>()
   const navigate = useNavigate()
-  const isOwner = useIsOwner(id)
+  const hasAccess = useHasCaptainAccess(id)
 
   useEffect(() => {
-    if (!isOwner) {
+    if (!hasAccess) {
       navigate('/captain', {
-        state: { message: 'Tournament not found or you don\'t have access.' },
+        state: { message: 'Please enter your session code and tournament PIN to access this tournament.' },
         replace: true,
       })
     }
-  }, [isOwner, navigate])
+  }, [hasAccess, navigate])
 
   const ctx = useMemo(
     () => (roundId ? loadOptimizerContext(roundId) : null),
     [roundId],
   )
 
-  if (!isOwner) return null
+  if (!hasAccess) return null
 
   // ── No optimizer context ──────────────────────────────────────────────────
 

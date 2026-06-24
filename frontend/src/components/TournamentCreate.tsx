@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
-import { addMyTournamentId } from '../hooks/useOwnership'
+import { setCaptainAccess } from '../hooks/useCaptainAccess'
 
 interface PlayerInput {
   name: string
@@ -14,11 +14,15 @@ interface FormState {
   numRounds: string
   teamName: string
   players: PlayerInput[]
+  pin: string
+  confirmPin: string
 }
 
 interface FormErrors {
   tournamentName?: string
   teamName?: string
+  pin?: string
+  confirmPin?: string
   players: Array<string | undefined>
 }
 
@@ -34,6 +38,13 @@ function validate(form: FormState): FormErrors | null {
   }
   if (!form.teamName.trim()) {
     errors.teamName = 'Team name is required'
+    hasErrors = true
+  }
+  if (!/^\d{4}$/.test(form.pin)) {
+    errors.pin = 'PIN must be exactly 4 digits'
+    hasErrors = true
+  } else if (form.pin !== form.confirmPin) {
+    errors.confirmPin = 'PINs do not match'
     hasErrors = true
   }
   form.players.forEach((p, i) => {
@@ -57,6 +68,8 @@ export default function TournamentCreate() {
     numRounds: '3',
     teamName: '',
     players: Array.from({ length: 5 }, emptyPlayer),
+    pin: '',
+    confirmPin: '',
   })
   const [errors, setErrors] = useState<FormErrors>({ players: Array(5).fill(undefined) })
   const [apiError, setApiError] = useState<string | null>(null)
@@ -104,8 +117,9 @@ export default function TournamentCreate() {
             email: p.email.trim() || undefined,
           })),
         },
+        pin: form.pin,
       })
-      addMyTournamentId(tournament.id)
+      setCaptainAccess(tournament.id, tournament.session.code)
       setCreated({ id: tournament.id, sessionCode: tournament.session.code })
     } catch (err) {
       if (err instanceof ApiError) {
@@ -145,6 +159,15 @@ export default function TournamentCreate() {
             <p className="text-xs text-muted uppercase tracking-widest mb-3">Session Code</p>
             <p className="text-5xl font-mono font-bold tracking-[0.25em] text-accent select-all">
               {created.sessionCode}
+            </p>
+          </div>
+
+          <div className="mb-6 flex items-start gap-2.5 bg-warning/10 border border-warning/30 rounded-lg px-4 py-3 text-left">
+            <svg className="w-4 h-4 text-warning shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            </svg>
+            <p className="text-sm text-warning">
+              Your Tournament PIN is required to access the captain dashboard. Make sure you remember it.
             </p>
           </div>
 
@@ -219,6 +242,58 @@ export default function TournamentCreate() {
                 <option key={n} value={n} className="bg-surface">{n} round{n !== 1 ? 's' : ''}</option>
               ))}
             </select>
+          </div>
+        </section>
+
+        {/* ── Captain PIN ──────────────────────────────────────────────────── */}
+        <section className="bg-black/30 rounded-xl p-5 border border-white/10 space-y-4">
+          <h2 className="text-base font-semibold text-white">Captain PIN</h2>
+
+          <div data-error={errors.pin ? '' : undefined}>
+            <label className="block text-sm text-muted mb-1.5">
+              Tournament PIN <span className="text-accent">*</span>
+            </label>
+            <input
+              type="password"
+              inputMode="numeric"
+              value={form.pin}
+              onChange={e => {
+                setForm(prev => ({ ...prev, pin: e.target.value.replace(/[^0-9]/g, '').slice(0, 4) }))
+                clearFieldError('pin')
+              }}
+              placeholder="••••"
+              maxLength={4}
+              autoComplete="off"
+              className={`${inputClass(!!errors.pin)} text-center tracking-[0.4em] font-mono`}
+            />
+            {errors.pin && (
+              <p className="mt-1.5 text-xs text-danger">{errors.pin}</p>
+            )}
+            <p className="mt-1.5 text-xs text-muted/60">
+              4-digit PIN to access your tournament as captain. Remember this — you'll need it to manage this tournament.
+            </p>
+          </div>
+
+          <div data-error={errors.confirmPin ? '' : undefined}>
+            <label className="block text-sm text-muted mb-1.5">
+              Confirm PIN <span className="text-accent">*</span>
+            </label>
+            <input
+              type="password"
+              inputMode="numeric"
+              value={form.confirmPin}
+              onChange={e => {
+                setForm(prev => ({ ...prev, confirmPin: e.target.value.replace(/[^0-9]/g, '').slice(0, 4) }))
+                clearFieldError('confirmPin')
+              }}
+              placeholder="••••"
+              maxLength={4}
+              autoComplete="off"
+              className={`${inputClass(!!errors.confirmPin)} text-center tracking-[0.4em] font-mono`}
+            />
+            {errors.confirmPin && (
+              <p className="mt-1.5 text-xs text-danger">{errors.confirmPin}</p>
+            )}
           </div>
         </section>
 

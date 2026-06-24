@@ -203,6 +203,7 @@ export const api = {
     name: string
     num_rounds: number
     team: { name: string; players: Array<{ name: string; faction?: string; email?: string }> }
+    pin: string
   }): Promise<TournamentOut> =>
     request('/tournaments', { method: 'POST', body: JSON.stringify(data) }),
 
@@ -219,6 +220,9 @@ export const api = {
 
   getSession: (code: string): Promise<SessionDetailOut> =>
     request(`/sessions/${code}`),
+
+  captainAuth: (code: string, pin: string): Promise<TournamentOut> =>
+    request(`/sessions/${code}/captain-auth`, { method: 'POST', body: JSON.stringify({ pin }) }),
 
   submitPredictions: (
     code: string,

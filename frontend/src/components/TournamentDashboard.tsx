@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import type { TournamentOut, OpponentTeamOut, RoundOut } from '../api/client'
-import { useIsOwner } from '../hooks/useOwnership'
+import { useHasCaptainAccess } from '../hooks/useCaptainAccess'
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
@@ -24,16 +24,16 @@ const emptyPlayer = (): OpponentPlayerInput => ({ name: '', faction: '', notes: 
 export default function TournamentDashboard() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const isOwner = useIsOwner(id)
+  const hasAccess = useHasCaptainAccess(id)
 
   useEffect(() => {
-    if (!isOwner) {
+    if (!hasAccess) {
       navigate('/captain', {
-        state: { message: 'Tournament not found or you don\'t have access.' },
+        state: { message: 'Please enter your session code and tournament PIN to access this tournament.' },
         replace: true,
       })
     }
-  }, [isOwner, navigate])
+  }, [hasAccess, navigate])
 
   const [tournament, setTournament] = useState<TournamentOut | null>(null)
   const [opponents, setOpponents] = useState<OpponentTeamOut[]>([])
@@ -237,7 +237,7 @@ export default function TournamentDashboard() {
     }
   }
 
-  if (!isOwner) return null
+  if (!hasAccess) return null
 
   // ── Loading / error states ────────────────────────────────────────────────
 

@@ -8,6 +8,7 @@ Run locally:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import random
 import string
@@ -60,6 +61,11 @@ def create_tables() -> None:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _hash_pin(pin: str) -> str:
+    """SHA256 hash of a tournament PIN — simple access control, not high-security."""
+    return hashlib.sha256(pin.encode("utf-8")).hexdigest()
+
 
 def _generate_session_code(db: Session) -> str:
     """Generate a unique 6-character uppercase+digit session code."""
@@ -115,7 +121,7 @@ def create_tournament(
     code = _generate_session_code(db)
 
     # All writes in one transaction
-    tournament = models.Tournament(name=payload.name)
+    tournament = models.Tournament(name=payload.name, pin_hash=_hash_pin(payload.pin))
     db.add(tournament)
     db.flush()
 
@@ -226,6 +232,28 @@ def get_session(code: str, db: Session = Depends(get_db)) -> dict:
         rounds=rounds_out,
         created_at=session.created_at,
     )
+
+
+@app.post(
+    "/api/v1/sessions/{code}/captain-auth",
+    response_model=schemas.TournamentOut,
+    tags=["Sessions"],
+    summary="Authenticate as captain via session code + tournament PIN",
+)
+def captain_auth(
+    code: str,
+    payload: schemas.CaptainAuthRequest,
+    db: Session = Depends(get_db),
+) -> models.Tournament:
+    session = db.query(models.Session).filter_by(code=code.upper()).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    tournament = session.tournament
+    if _hash_pin(payload.pin) != tournament.pin_hash:
+        raise HTTPException(status_code=401, detail="Invalid tournament PIN")
+
+    return tournament
 
 
 # ── Predictions ───────────────────────────────────────────────────────────────

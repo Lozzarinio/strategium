@@ -127,6 +127,11 @@ class SessionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CaptainAuthRequest(BaseModel):
+    """POST /api/v1/sessions/{code}/captain-auth"""
+    pin: str = Field(..., min_length=4, max_length=4)
+
+
 class SessionDetailOut(BaseModel):
     """
     GET /api/v1/sessions/{code}
@@ -152,6 +157,14 @@ class TournamentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     num_rounds: int = Field(..., ge=1, le=5)
     team: TeamCreate
+    pin: str = Field(..., min_length=4, max_length=4)
+
+    @field_validator("pin")
+    @classmethod
+    def validate_pin(cls, v: str) -> str:
+        if not v.isdigit():
+            raise ValueError("PIN must be exactly 4 digits")
+        return v
 
 
 class TournamentOut(BaseModel):
