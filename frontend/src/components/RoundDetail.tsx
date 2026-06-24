@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import { useHasCaptainAccess } from '../hooks/useCaptainAccess'
-import type { RoundDetailOut, TournamentOut } from '../api/client'
+import { useTournamentCache } from '../hooks/useTournamentCache'
+import type { RoundDetailOut } from '../api/client'
 import type { OptimizationResult } from '../types/optimization'
 import { getScoreColor } from '../utils/scores'
 
@@ -75,11 +76,18 @@ export default function RoundDetail() {
     }
   }, [hasAccess, navigate])
 
-  // Remote data
-  const [roundData, setRoundData] = useState<RoundDetailOut | null>(null)
-  const [tournament, setTournament] = useState<TournamentOut | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  // Remote data — sourced from the cached tournament (no separate round fetch needed)
+  const { tournament, loading, error: loadError, refreshCache } = useTournamentCache(id)
+
+  const roundData: RoundDetailOut | null = useMemo(() => {
+    if (!tournament || !roundId) return null
+    const round = tournament.session.rounds.find(r => String(r.id) === roundId)
+    if (!round) return null
+    const opponentTeam = round.opponent_team_id != null
+      ? tournament.opponent_teams.find(o => o.id === round.opponent_team_id) ?? null
+      : null
+    return { ...round, opponent_team: opponentTeam }
+  }, [tournament, roundId])
 
   // Prediction matrix (local editable copy)
   const [predictions, setPredictions] = useState<PredMatrix>({})
@@ -93,35 +101,19 @@ export default function RoundDetail() {
   const [optimizerError, setOptimizerError] = useState<string | null>(null)
   const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null)
 
-  // ── Load data on mount ────────────────────────────────────────────────────
+  // ── Sync prediction matrix from cached tournament data ───────────────────
+  // Runs on initial load and whenever the cache revalidates (background
+  // refresh or refreshCache()), so the matrix always reflects canonical data.
 
   useEffect(() => {
-    if (!id || !roundId) return
-    setLoading(true)
-    setLoadError(null)
-
-    Promise.all([
-      api.getTournament(id),
-      api.getRound(roundId),
-    ])
-      .then(([t, r]) => {
-        setTournament(t)
-        setRoundData(r)
-        // Initialise prediction matrix from round data
-        const matrix: PredMatrix = {}
-        for (const player of t.team.players) {
-          const row = r.predictions[player.name]
-          matrix[player.name] = row && Object.keys(row).length > 0 ? row : null
-        }
-        setPredictions(matrix)
-      })
-      .catch(err => {
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load round — is the backend running?'
-        )
-      })
-      .finally(() => setLoading(false))
-  }, [id, roundId])
+    if (!tournament || !roundData) return
+    const matrix: PredMatrix = {}
+    for (const player of tournament.team.players) {
+      const row = roundData.predictions[player.name]
+      matrix[player.name] = row && Object.keys(row).length > 0 ? row : null
+    }
+    setPredictions(matrix)
+  }, [tournament, roundData])
 
   // ── Cell editing ──────────────────────────────────────────────────────────
 
@@ -159,6 +151,7 @@ export default function RoundDetail() {
             roundData.round_number,
             predDict,
           )
+          void refreshCache()
         } catch (err) {
           console.error('Failed to submit predictions for', playerName, err)
         } finally {
@@ -184,6 +177,7 @@ export default function RoundDetail() {
       const result = await api.runOptimizer(roundId)
       setOptimizationResult(result)
       setOptimizerState('results')
+      void refreshCache()
 
       // Persist context to localStorage for the wizard
       const yourPlayers = tournament.team.players.map(p => p.name)

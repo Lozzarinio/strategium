@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import { setCaptainAccess } from '../hooks/useCaptainAccess'
+import { writeTournamentCache } from '../hooks/useTournamentCache'
 
 interface PlayerInput {
   name: string
@@ -120,6 +121,7 @@ export default function TournamentCreate() {
         pin: form.pin,
       })
       setCaptainAccess(tournament.id, tournament.session.code)
+      writeTournamentCache(tournament.id, tournament)
       setCreated({ id: tournament.id, sessionCode: tournament.session.code })
     } catch (err) {
       if (err instanceof ApiError) {

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import { setCaptainAccess } from '../hooks/useCaptainAccess'
+import { writeTournamentCache } from '../hooks/useTournamentCache'
 
 export default function CaptainDashboard() {
   const location = useLocation()
@@ -23,6 +24,7 @@ export default function CaptainDashboard() {
     try {
       const tournament = await api.captainAuth(code, pin)
       setCaptainAccess(tournament.id, code)
+      writeTournamentCache(tournament.id, tournament)
       navigate(`/tournament/${tournament.id}`)
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {

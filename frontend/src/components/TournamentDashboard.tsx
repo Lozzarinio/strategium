@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
-import type { TournamentOut, OpponentTeamOut, RoundOut } from '../api/client'
+import type { OpponentTeamOut } from '../api/client'
 import { useHasCaptainAccess } from '../hooks/useCaptainAccess'
+import { useTournamentCache } from '../hooks/useTournamentCache'
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
@@ -35,11 +36,9 @@ export default function TournamentDashboard() {
     }
   }, [hasAccess, navigate])
 
-  const [tournament, setTournament] = useState<TournamentOut | null>(null)
-  const [opponents, setOpponents] = useState<OpponentTeamOut[]>([])
-  const [rounds, setRounds] = useState<RoundOut[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const { tournament, loading, error: loadError, refreshCache, setTournament } = useTournamentCache(id)
+  const opponents = tournament?.opponent_teams ?? []
+  const rounds = tournament?.session.rounds ?? []
 
   const [expandedTeam, setExpandedTeam] = useState<number | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
@@ -66,30 +65,6 @@ export default function TournamentDashboard() {
 
   // Round assignment state
   const [assigningRound, setAssigningRound] = useState<number | null>(null)
-
-  // ── Load tournament on mount ──────────────────────────────────────────────
-
-  useEffect(() => {
-    if (!id) return
-    setLoading(true)
-    setLoadError(null)
-
-    Promise.all([
-      api.getTournament(id),
-      api.getOpponentTeams(id),
-    ])
-      .then(([t, opps]) => {
-        setTournament(t)
-        setOpponents(opps)
-        setRounds(t.session.rounds)
-      })
-      .catch(err => {
-        setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load tournament — is the backend running?'
-        )
-      })
-      .finally(() => setLoading(false))
-  }, [id])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -132,7 +107,8 @@ export default function TournamentDashboard() {
           notes: p.notes.trim() || undefined,
         })),
       })
-      setOpponents(prev => [...prev, team])
+      setTournament(prev => prev ? { ...prev, opponent_teams: [...prev.opponent_teams, team] } : prev)
+      void refreshCache()
       setExpandedTeam(team.id)
       setShowAddForm(false)
       setNewName('')
@@ -200,7 +176,11 @@ export default function TournamentDashboard() {
           notes: p.notes.trim() || undefined,
         })),
       })
-      setOpponents(prev => prev.map(o => o.id === updated.id ? updated : o))
+      setTournament(prev => prev ? {
+        ...prev,
+        opponent_teams: prev.opponent_teams.map(o => o.id === updated.id ? updated : o),
+      } : prev)
+      void refreshCache()
       setEditingTeam(null)
     } catch (err) {
       setSaveEditError(
@@ -215,7 +195,11 @@ export default function TournamentDashboard() {
     if (!confirm('Delete this opponent team? This cannot be undone.')) return
     try {
       await api.deleteOpponentTeam(teamId)
-      setOpponents(prev => prev.filter(o => o.id !== teamId))
+      setTournament(prev => prev ? {
+        ...prev,
+        opponent_teams: prev.opponent_teams.filter(o => o.id !== teamId),
+      } : prev)
+      void refreshCache()
       if (editingTeam === teamId) setEditingTeam(null)
       if (expandedTeam === teamId) setExpandedTeam(null)
     } catch (err) {
@@ -228,7 +212,16 @@ export default function TournamentDashboard() {
     const opponentTeamId = value ? Number(value) : null
     try {
       const updated = await api.updateRound(roundId, { opponent_team_id: opponentTeamId })
-      setRounds(prev => prev.map(r => r.id === roundId ? { ...r, opponent_team_id: updated.opponent_team_id } : r))
+      setTournament(prev => prev ? {
+        ...prev,
+        session: {
+          ...prev.session,
+          rounds: prev.session.rounds.map(r =>
+            r.id === roundId ? { ...r, opponent_team_id: updated.opponent_team_id } : r
+          ),
+        },
+      } : prev)
+      void refreshCache()
     } catch (err) {
       // On failure, leave the round unchanged — the dropdown will revert on next render
       console.error('Failed to assign opponent:', err)
