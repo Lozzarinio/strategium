@@ -597,6 +597,13 @@ def create_completed_pairings(
             detail="Completed pairings already exist for this round. Delete first to re-submit.",
         )
 
+    team_size = round_.session.tournament.team_size
+    if len(payload.pairings) != team_size:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Expected {team_size} pairings but got {len(payload.pairings)}",
+        )
+
     cp = models.CompletedPairings(
         round_id=round_id,
         pairings=[p.model_dump() for p in payload.pairings],
@@ -654,7 +661,7 @@ def optimize_round(
     if missing:
         raise HTTPException(
             status_code=400,
-            detail=f"Predictions missing for: {missing}. All 5 players must submit before optimizing.",
+            detail=f"Predictions missing for: {missing}. All {len(your_players)} players must submit before optimizing.",
         )
 
     return _optimizer.optimize(your_players, opp_players, preds)

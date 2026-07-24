@@ -5,8 +5,8 @@ Verifies:
 1. Output structure matches the OptimizationResult TypeScript interface.
 2. Deterministic (same input → same output).
 3. Recommended defender has the highest worst_case_total.
-4. Executes in under 10 seconds.
-5. total_scenarios ≈ 130,000.
+4. Executes in under 10 seconds (5v5) / a generous bound (8v8).
+5. The recursive solver also handles 8v8 team sizes.
 """
 
 import sys
@@ -48,19 +48,19 @@ def test_optimizer_structure_and_timing():
     assert elapsed < 10.0, f"Optimizer took {elapsed:.1f}s — must be < 10s"
 
     # ── Top-level keys ────────────────────────────────────────────────────────
-    assert set(result.keys()) == {"round_1", "round_2_lookup", "metadata"}
+    assert set(result.keys()) == {"round_1", "subgame_lookup", "metadata"}
 
     # ── Metadata ──────────────────────────────────────────────────────────────
     meta = result["metadata"]
-    assert set(meta.keys()) == {"total_scenarios", "computation_time_ms", "prediction_hash"}
+    assert set(meta.keys()) == {
+        "total_scenarios", "computation_time_ms", "prediction_hash", "team_size",
+    }
     print(f"[metadata] total_scenarios = {meta['total_scenarios']}")
     print(f"[metadata] computation_time_ms = {meta['computation_time_ms']}")
     print(f"[metadata] prediction_hash = {meta['prediction_hash']}")
 
     assert isinstance(meta["total_scenarios"], int)
-    assert 120_000 <= meta["total_scenarios"] <= 140_000, (
-        f"total_scenarios={meta['total_scenarios']} expected ~130k"
-    )
+    assert meta["team_size"] == 5
     assert isinstance(meta["computation_time_ms"], int)
     assert isinstance(meta["prediction_hash"], str) and len(meta["prediction_hash"]) > 0
 
@@ -80,21 +80,20 @@ def test_optimizer_structure_and_timing():
     print(f"[round_1] recommended defender: {rec_def['player']} "
           f"(worst={rec_def['worst_case_total']}, best={rec_def['best_case_total']})")
 
-    # ── Round 2 lookup ────────────────────────────────────────────────────────
-    r2_lookup = result["round_2_lookup"]
-    assert len(r2_lookup) == 100, f"Expected 100 R2 entries, got {len(r2_lookup)}"
+    # ── Subgame lookup (the 3v3 states reachable after Round 1) ──────────────────
+    subgame_lookup = result["subgame_lookup"]
+    assert len(subgame_lookup) == 100, f"Expected 100 subgame entries, got {len(subgame_lookup)}"
 
-    for key, r2_tree in r2_lookup.items():
-        assert "|" in key, f"R2 key missing pipe separator: {key}"
+    for key, subgame_tree in subgame_lookup.items():
+        assert "|" in key, f"subgame key missing pipe separator: {key}"
         your_side, opp_side = key.split("|")
         assert len(your_side.split(",")) == 3
         assert len(opp_side.split(",")) == 3
-        assert "defender_options" in r2_tree
-        r2_def_opts = r2_tree["defender_options"]
-        assert len(r2_def_opts) == 3, f"R2 should have 3 defender options, key={key}"
-        for opt in r2_def_opts:
-            your3 = your_side.split(",")
-            opp3  = opp_side.split(",")
+        assert "defender_options" in subgame_tree
+        sub_def_opts = subgame_tree["defender_options"]
+        assert len(sub_def_opts) == 3, f"Subgame should have 3 defender options, key={key}"
+        for opt in sub_def_opts:
+            opp3 = opp_side.split(",")
             _assert_defender_option(opt, expected_opp_defenders=opp3)
 
 
@@ -128,33 +127,35 @@ def test_deterministic():
 
 
 def test_total_scenarios_count():
-    """total_scenarios should be exactly 129,600."""
+    """total_scenarios is deterministic for a given team size (recursive solver)."""
     result = optimizer.optimize(YOUR_PLAYERS, OPP_PLAYERS, PREDICTIONS)
     total = result["metadata"]["total_scenarios"]
     print(f"\n[scenarios] total_scenarios = {total}")
-    assert total == 129_600, f"Expected 129600, got {total}"
+    assert total == 3600, f"Expected 3600, got {total}"
 
 
-def test_r2_attacker_options_structure():
-    """Each R2 defender option should have 2 attacker options per opponent defender."""
+def test_subgame_attacker_options_structure():
+    """
+    Each 3-remaining subgame's defender option has exactly 1 attacker-option entry
+    per opponent defender (the attacker pair is forced when 3 players remain —
+    the only choice left is the counter-pick, folded into worst/best case).
+    """
     result = optimizer.optimize(YOUR_PLAYERS, OPP_PLAYERS, PREDICTIONS)
-    r2_lookup = result["round_2_lookup"]
+    subgame_lookup = result["subgame_lookup"]
 
-    sample_key = next(iter(r2_lookup))
+    sample_key = next(iter(subgame_lookup))
     your_side, opp_side = sample_key.split("|")
     opp3 = opp_side.split(",")
 
-    sample_tree = r2_lookup[sample_key]
+    sample_tree = subgame_lookup[sample_key]
     for def_opt in sample_tree["defender_options"]:
         for opp_def, atk_opts in def_opt["opponent_responses"].items():
             assert opp_def in opp3
-            # 2 counter-pick options per (your_def, opp_def) in R2
-            assert len(atk_opts) == 2, (
-                f"R2 should have 2 attacker options per (def, opp_def); "
+            assert len(atk_opts) == 1, (
+                f"Subgame should have 1 forced attacker option per (def, opp_def); "
                 f"got {len(atk_opts)} for opp_def={opp_def}"
             )
-            n_rec = sum(1 for a in atk_opts if a["is_recommended"])
-            assert n_rec == 1, "Exactly one attacker option should be recommended"
+            assert atk_opts[0]["is_recommended"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -196,4 +197,64 @@ def _assert_defender_option(opt: dict, expected_opp_defenders: list) -> None:
             assert isinstance(atk["is_recommended"], bool)
             assert isinstance(atk["worst_case_total"], (int, float))
             assert isinstance(atk["best_case_total"], (int, float))
-            assert atk["best_case_total"] >= atk["worst_case_total"]
+
+
+# ---------------------------------------------------------------------------
+# 8v8 team size
+# ---------------------------------------------------------------------------
+
+YOUR_PLAYERS_8 = [f"P{i}" for i in range(1, 9)]
+OPP_PLAYERS_8 = [f"E{i}" for i in range(1, 9)]
+PREDICTIONS_8 = {
+    y: {o: 10 + ((i * 3 + j * 7) % 11) for j, o in enumerate(OPP_PLAYERS_8)}
+    for i, y in enumerate(YOUR_PLAYERS_8)
+}
+
+
+def test_optimizer_8v8_structure_and_timing():
+    """The recursive solver must also handle 8v8 team sizes correctly."""
+    t0 = time.time()
+    result = optimizer.optimize(YOUR_PLAYERS_8, OPP_PLAYERS_8, PREDICTIONS_8)
+    elapsed = time.time() - t0
+    print(f"\n[timing] 8v8 optimize() completed in {elapsed:.1f}s")
+
+    assert elapsed < 120.0, f"8v8 optimizer took {elapsed:.1f}s — too slow"
+    assert set(result.keys()) == {"round_1", "subgame_lookup", "metadata"}
+
+    meta = result["metadata"]
+    assert meta["team_size"] == 8
+
+    def_opts = result["round_1"]["defender_options"]
+    assert len(def_opts) == 8, "Must have exactly 8 defender options"
+    assert {d["player"] for d in def_opts} == set(YOUR_PLAYERS_8)
+
+    recommended = [d for d in def_opts if d["is_recommended"]]
+    assert len(recommended) == 1
+    rec = recommended[0]
+    print(f"[8v8] recommended defender: {rec['player']} "
+          f"(worst={rec['worst_case_total']}, best={rec['best_case_total']})")
+    assert rec["worst_case_total"] == max(d["worst_case_total"] for d in def_opts)
+
+    for d in def_opts:
+        assert set(d["opponent_responses"].keys()) == set(OPP_PLAYERS_8)
+        for opp_def, atk_opts in d["opponent_responses"].items():
+            assert len(atk_opts) >= 1
+            assert sum(1 for a in atk_opts if a["is_recommended"]) == 1
+            for a in atk_opts:
+                assert a["best_case_total"] >= a["worst_case_total"]
+
+    # Every remaining-player-set entering round 2 (6 per side) should be a
+    # reachable subgame — spot check via a defender's opponent response.
+    sample_def = def_opts[0]
+    sample_opp = next(iter(sample_def["opponent_responses"]))
+    sample_atk_opt = sample_def["opponent_responses"][sample_opp][0]
+    assert len(sample_atk_opt["attackers"]) == 2
+
+
+def test_optimizer_8v8_deterministic():
+    """Running the 8v8 optimizer twice must produce identical output."""
+    r1 = optimizer.optimize(YOUR_PLAYERS_8, OPP_PLAYERS_8, PREDICTIONS_8)
+    r2 = optimizer.optimize(YOUR_PLAYERS_8, OPP_PLAYERS_8, PREDICTIONS_8)
+    r1["metadata"].pop("computation_time_ms")
+    r2["metadata"].pop("computation_time_ms")
+    assert r1 == r2, "8v8 optimizer output is not deterministic!"

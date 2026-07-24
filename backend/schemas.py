@@ -251,7 +251,7 @@ class Round1TreeOut(BaseModel):
     defender_options: List[DefenderOptionOut]
 
 
-class Round2TreeOut(BaseModel):
+class SubgameTreeOut(BaseModel):
     defender_options: List[DefenderOptionOut]
 
 
@@ -259,6 +259,7 @@ class OptimizationMetadataOut(BaseModel):
     total_scenarios: int
     computation_time_ms: int
     prediction_hash: str
+    team_size: int
 
 
 class OptimizationResultOut(BaseModel):
@@ -269,7 +270,7 @@ class OptimizationResultOut(BaseModel):
     The frontend stores this in React state + localStorage during the wizard.
     """
     round_1: Round1TreeOut
-    round_2_lookup: Dict[str, Round2TreeOut]
+    subgame_lookup: Dict[str, SubgameTreeOut]
     metadata: OptimizationMetadataOut
 
 
@@ -283,8 +284,13 @@ class PairingRecord(BaseModel):
 
 
 class CompletedPairingsCreate(BaseModel):
-    """POST /api/v1/rounds/{round_id}/completed-pairings"""
-    pairings: List[PairingRecord] = Field(..., min_length=5, max_length=5)
+    """
+    POST /api/v1/rounds/{round_id}/completed-pairings
+
+    Length is 5 or 8 depending on the tournament's team_size; the exact
+    count is validated against the round's tournament in the endpoint.
+    """
+    pairings: List[PairingRecord] = Field(..., min_length=5, max_length=8)
     total_predicted_score: float
     optimization_best_score: Optional[float] = None
 
