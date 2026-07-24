@@ -29,6 +29,7 @@ class Tournament(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     pin_hash = Column(String(255), nullable=False)
+    prediction_format = Column(String(10), nullable=False, default='score_20')
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships

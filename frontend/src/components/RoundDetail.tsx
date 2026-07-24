@@ -6,6 +6,7 @@ import { useTournamentCache } from '../hooks/useTournamentCache'
 import type { RoundDetailOut } from '../api/client'
 import type { OptimizationResult } from '../types/optimization'
 import { getScoreColor } from '../utils/scores'
+import type { PredictionFormat } from '../utils/scores'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -123,13 +124,22 @@ export default function RoundDetail() {
     setEditingCell({ player, opponent })
   }
 
-  async function commitEdit() {
+  async function commitEdit(directValue?: number) {
     if (!editingCell || !tournament || !roundData?.opponent_team) {
       setEditingCell(null)
       return
     }
-    const val = parseFloat(editValue)
-    if (!isNaN(val) && val >= 0 && val <= 20 && Math.round(val * 2) === val * 2) {
+    const format: PredictionFormat = tournament.prediction_format as PredictionFormat
+    const val = directValue !== undefined ? directValue : parseFloat(editValue)
+
+    let isValid = false
+    if (format === 'score_5') {
+      isValid = Number.isInteger(val) && val >= 1 && val <= 5
+    } else {
+      isValid = !isNaN(val) && val >= 0 && val <= 20 && Math.round(val * 2) === val * 2
+    }
+
+    if (isValid) {
       const { player: playerName, opponent: oppName } = editingCell
       const updatedRow: PredRow = {
         ...(predictions[playerName] ?? {}),
@@ -231,6 +241,15 @@ export default function RoundDetail() {
 
   const opponents = roundData.opponent_team.players
   const yourPlayers = tournament.team.players
+  const predFormat: PredictionFormat = tournament.prediction_format as PredictionFormat
+
+  const score5CellOptions = [
+    { v: 1, cls: 'text-danger border-danger/40 hover:bg-danger/15' },
+    { v: 2, cls: 'text-orange-500 border-orange-500/40 hover:bg-orange-500/15' },
+    { v: 3, cls: 'text-warning border-warning/40 hover:bg-warning/15' },
+    { v: 4, cls: 'text-lime-500 border-lime-500/40 hover:bg-lime-500/15' },
+    { v: 5, cls: 'text-success border-success/40 hover:bg-success/15' },
+  ]
   const allSubmitted = yourPlayers.every(p => isRowComplete(predictions[p.name], opponents))
   const submittedCount = yourPlayers.filter(p => isRowComplete(predictions[p.name], opponents)).length
   const missingPlayers = yourPlayers.filter(p => !isRowComplete(predictions[p.name], opponents))
@@ -334,27 +353,42 @@ export default function RoundDetail() {
                             cursor-pointer hover:bg-accent/10 transition-colors group"
                         >
                           {isEditing ? (
-                            <input
-                              ref={editInputRef}
-                              type="number"
-                              min="0"
-                              max="20"
-                              step="0.5"
-                              inputMode="decimal"
-                              autoFocus
-                              value={editValue}
-                              onChange={e => setEditValue(e.target.value)}
-                              onBlur={() => void commitEdit()}
-                              onKeyDown={handleEditKeyDown}
-                              className="w-16 text-center bg-black/60 border border-accent rounded-md
-                                px-1 py-1.5 text-white text-sm font-mono focus:outline-none
-                                [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            />
+                            predFormat === 'score_5' ? (
+                              <div className="flex gap-0.5 justify-center">
+                                {score5CellOptions.map(({ v, cls }) => (
+                                  <button
+                                    key={v}
+                                    type="button"
+                                    onClick={e => { e.stopPropagation(); void commitEdit(v) }}
+                                    className={`w-7 h-7 rounded text-xs font-bold transition-colors border ${cls}`}
+                                  >
+                                    {v}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <input
+                                ref={editInputRef}
+                                type="number"
+                                min="0"
+                                max="20"
+                                step="0.5"
+                                inputMode="decimal"
+                                autoFocus
+                                value={editValue}
+                                onChange={e => setEditValue(e.target.value)}
+                                onBlur={() => void commitEdit()}
+                                onKeyDown={handleEditKeyDown}
+                                className="w-16 text-center bg-black/60 border border-accent rounded-md
+                                  px-1 py-1.5 text-white text-sm font-mono focus:outline-none
+                                  [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            )
                           ) : (
                             <span
                               className={`text-sm font-mono font-semibold transition-colors ${
                                 score !== undefined
-                                  ? getScoreColor(score)
+                                  ? getScoreColor(score, predFormat)
                                   : 'text-muted/30'
                               }`}
                             >

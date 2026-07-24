@@ -146,6 +146,7 @@ class SessionDetailOut(BaseModel):
     team: TeamOut
     rounds: List[RoundDetailOut]
     created_at: datetime
+    prediction_format: str
 
     model_config = {"from_attributes": True}
 
@@ -158,12 +159,20 @@ class TournamentCreate(BaseModel):
     num_rounds: int = Field(..., ge=1, le=5)
     team: TeamCreate
     pin: str = Field(..., min_length=4, max_length=4)
+    prediction_format: str = Field(default='score_20')
 
     @field_validator("pin")
     @classmethod
     def validate_pin(cls, v: str) -> str:
         if not v.isdigit():
             raise ValueError("PIN must be exactly 4 digits")
+        return v
+
+    @field_validator("prediction_format")
+    @classmethod
+    def validate_prediction_format(cls, v: str) -> str:
+        if v not in ('score_20', 'score_5'):
+            raise ValueError("prediction_format must be 'score_20' or 'score_5'")
         return v
 
 
@@ -174,6 +183,7 @@ class TournamentOut(BaseModel):
     session: SessionOut
     opponent_teams: List[OpponentTeamOut]
     created_at: datetime
+    prediction_format: str
 
     model_config = {"from_attributes": True}
 
@@ -195,23 +205,11 @@ class PredictionSubmit(BaseModel):
     POST /api/v1/sessions/{code}/predictions
 
     player_name must match one of the 5 roster names (validated in endpoint).
-    Each score is 0–20, integers or half-points (0.5 steps).
+    Score validation is format-dependent and handled in the endpoint.
     """
     player_name: str = Field(..., min_length=1, max_length=255)
     round_number: int = Field(..., ge=1, le=5)
     predictions: Dict[str, float]
-
-    @field_validator("predictions")
-    @classmethod
-    def validate_scores(cls, v: Dict[str, float]) -> Dict[str, float]:
-        for opponent, score in v.items():
-            if not (0 <= score <= 20):
-                raise ValueError(f"Score for {opponent} must be between 0 and 20")
-            if round(score * 2) != score * 2:
-                raise ValueError(
-                    f"Score for {opponent} must be an integer or half-point (e.g. 12 or 12.5)"
-                )
-        return v
 
 
 class PredictionsOut(BaseModel):

@@ -121,7 +121,11 @@ def create_tournament(
     code = _generate_session_code(db)
 
     # All writes in one transaction
-    tournament = models.Tournament(name=payload.name, pin_hash=_hash_pin(payload.pin))
+    tournament = models.Tournament(
+        name=payload.name,
+        pin_hash=_hash_pin(payload.pin),
+        prediction_format=payload.prediction_format,
+    )
     db.add(tournament)
     db.flush()
 
@@ -231,6 +235,7 @@ def get_session(code: str, db: Session = Depends(get_db)) -> dict:
         team=schemas.TeamOut.model_validate(team),
         rounds=rounds_out,
         created_at=session.created_at,
+        prediction_format=tournament.prediction_format,
     )
 
 
@@ -297,6 +302,27 @@ def submit_predictions(
             status_code=400,
             detail="Round has no opponent team assigned — cannot submit predictions yet",
         )
+
+    # Validate scores per tournament prediction format
+    prediction_format = session.tournament.prediction_format
+    for opponent, score in payload.predictions.items():
+        if prediction_format == 'score_5':
+            if score != int(score) or not (1 <= int(score) <= 5):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Score for {opponent} must be an integer 1–5 for this tournament's format",
+                )
+        else:
+            if not (0 <= score <= 20):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Score for {opponent} must be between 0 and 20",
+                )
+            if round(score * 2) != score * 2:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Score for {opponent} must be an integer or half-point (e.g. 12 or 12.5)",
+                )
 
     # Merge predictions into the round's JSON (atomic row update per player)
     current = dict(round_.predictions or {})

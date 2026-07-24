@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api, ApiError } from '../api/client'
 import type { SessionDetailOut, RoundDetailOut } from '../api/client'
 import { getScoreColor } from '../utils/scores'
+import type { PredictionFormat } from '../utils/scores'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,9 +28,10 @@ interface TeammatesViewProps {
   submitted: Record<string, Record<string, number>>
   pending: string[]
   currentPlayer: string
+  format: PredictionFormat
 }
 
-function TeammatesView({ opponents, submitted, pending, currentPlayer }: TeammatesViewProps) {
+function TeammatesView({ opponents, submitted, pending, currentPlayer, format }: TeammatesViewProps) {
   const submittedEntries = Object.entries(submitted)
 
   return (
@@ -51,7 +53,7 @@ function TeammatesView({ opponents, submitted, pending, currentPlayer }: Teammat
                     <div key={op.id}>
                       <p className="text-[10px] text-muted truncate leading-tight">{op.name}</p>
                       <p className={`text-sm font-mono font-semibold ${
-                        preds[op.name] !== undefined ? getScoreColor(preds[op.name]) : 'text-muted/40'
+                        preds[op.name] !== undefined ? getScoreColor(preds[op.name], format) : 'text-muted/40'
                       }`}>
                         {preds[op.name] ?? '—'}
                       </p>
@@ -194,15 +196,22 @@ export default function PlayerView() {
     if (!selectedRound?.opponent_team || !sessionData) return
 
     const opponents = selectedRound.opponent_team.players
+    const format = sessionData.prediction_format
     const errors: Record<string, string> = {}
     for (const op of opponents) {
       const raw = scores[op.name] ?? ''
       if (raw === '') { errors[op.name] = 'Required'; continue }
       const val = parseFloat(raw)
-      if (isNaN(val) || val < 0 || val > 20) {
-        errors[op.name] = 'Must be 0–20'
-      } else if (Math.round(val * 2) !== val * 2) {
-        errors[op.name] = 'Integers or .5 steps only (e.g. 12.5)'
+      if (format === 'score_5') {
+        if (![1, 2, 3, 4, 5].includes(val)) {
+          errors[op.name] = 'Select a rating 1–5'
+        }
+      } else {
+        if (isNaN(val) || val < 0 || val > 20) {
+          errors[op.name] = 'Must be 0–20'
+        } else if (Math.round(val * 2) !== val * 2) {
+          errors[op.name] = 'Integers or .5 steps only (e.g. 12.5)'
+        }
       }
     }
     if (Object.keys(errors).length > 0) {
@@ -432,6 +441,15 @@ export default function PlayerView() {
 
   if (screen === 'predict' && selectedRound?.opponent_team && sessionData) {
     const opponents = selectedRound.opponent_team.players
+    const format = sessionData.prediction_format
+
+    const score5Options = [
+      { value: 1, label: '1', desc: 'Big Loss',   base: 'border-danger/50 text-danger',   active: 'bg-danger/20 border-danger' },
+      { value: 2, label: '2', desc: 'Small Loss',  base: 'border-orange-500/50 text-orange-500', active: 'bg-orange-500/20 border-orange-500' },
+      { value: 3, label: '3', desc: 'Draw',        base: 'border-warning/50 text-warning', active: 'bg-warning/20 border-warning' },
+      { value: 4, label: '4', desc: 'Small Win',   base: 'border-lime-500/50 text-lime-500',   active: 'bg-lime-500/20 border-lime-500' },
+      { value: 5, label: '5', desc: 'Big Win',     base: 'border-success/50 text-success', active: 'bg-success/20 border-success' },
+    ]
 
     return (
       <div className="max-w-sm mx-auto px-4 py-10">
@@ -444,7 +462,10 @@ export default function PlayerView() {
             {selectedRound.opponent_team.name}
           </h2>
           <p className="text-muted text-sm mt-1">
-            Round {selectedRound.round_number} · Predict your score against each opponent (0–20, half-points ok).
+            {format === 'score_5'
+              ? `Round ${selectedRound.round_number} · Rate your matchup against each opponent: 1 = Big Loss, 5 = Big Win.`
+              : `Round ${selectedRound.round_number} · Predict your score against each opponent (0–20, half-points ok).`
+            }
           </p>
         </div>
 
@@ -484,35 +505,60 @@ export default function PlayerView() {
           {opponents.map(op => (
             <div
               key={op.id}
-              className={`flex items-center gap-3 bg-black/30 rounded-xl px-4 py-3 border transition-colors ${
+              className={`bg-black/30 rounded-xl px-4 py-3 border transition-colors ${
                 scoreErrors[op.name] ? 'border-danger/50' : 'border-white/10'
               }`}
             >
-              <div className="flex-1 min-w-0">
-                <p className="text-white text-sm font-medium leading-tight">{op.name}</p>
-                {op.faction && <p className="text-muted text-xs">{op.faction}</p>}
-                {scoreErrors[op.name] && (
-                  <p className="text-danger text-xs mt-0.5">{scoreErrors[op.name]}</p>
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="min-w-0">
+                  <p className="text-white text-sm font-medium leading-tight">{op.name}</p>
+                  {op.faction && <p className="text-muted text-xs">{op.faction}</p>}
+                </div>
+                {format === 'score_20' && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <input
+                      type="number"
+                      min="0"
+                      max="20"
+                      step="0.5"
+                      inputMode="decimal"
+                      value={scores[op.name] ?? ''}
+                      onChange={e => handleScoreChange(op.name, e.target.value)}
+                      placeholder="–"
+                      className={`w-16 text-center bg-black/40 border rounded-lg px-1 py-2 text-white font-mono text-sm
+                        focus:outline-none focus:border-accent transition-colors
+                        [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none
+                        ${scoreErrors[op.name] ? 'border-danger' : 'border-white/10 hover:border-white/25'}`}
+                    />
+                    <span className="text-muted/60 text-xs">/20</span>
+                  </div>
                 )}
               </div>
-
-              <div className="flex items-center gap-1.5 shrink-0">
-                <input
-                  type="number"
-                  min="0"
-                  max="20"
-                  step="0.5"
-                  inputMode="decimal"
-                  value={scores[op.name] ?? ''}
-                  onChange={e => handleScoreChange(op.name, e.target.value)}
-                  placeholder="–"
-                  className={`w-16 text-center bg-black/40 border rounded-lg px-1 py-2 text-white font-mono text-sm
-                    focus:outline-none focus:border-accent transition-colors
-                    [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none
-                    ${scoreErrors[op.name] ? 'border-danger' : 'border-white/10 hover:border-white/25'}`}
-                />
-                <span className="text-muted/60 text-xs">/20</span>
-              </div>
+              {format === 'score_5' && (
+                <div className="flex gap-1.5">
+                  {score5Options.map(opt => {
+                    const selected = scores[op.name] === String(opt.value)
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => handleScoreChange(op.name, String(opt.value))}
+                        title={opt.desc}
+                        className={`flex-1 py-2 rounded-lg border text-sm font-bold transition-colors ${
+                          selected
+                            ? `${opt.active} font-semibold`
+                            : `bg-black/30 ${opt.base} hover:bg-white/5`
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              {scoreErrors[op.name] && (
+                <p className="text-danger text-xs mt-1.5">{scoreErrors[op.name]}</p>
+              )}
             </div>
           ))}
 
@@ -564,6 +610,7 @@ export default function PlayerView() {
                 submitted={teammates_display}
                 pending={pendingInTeammates}
                 currentPlayer={selectedPlayer}
+                format={format}
               />
             )
           )}

@@ -134,6 +134,7 @@ export interface TournamentOut {
   team: TeamOut
   session: SessionOut
   opponent_teams: OpponentTeamOut[]
+  prediction_format: 'score_20' | 'score_5'
 }
 
 export interface TournamentListItem {
@@ -149,6 +150,7 @@ export interface SessionDetailOut {
   tournament_name: string
   team: TeamOut
   rounds: RoundDetailOut[]
+  prediction_format: 'score_20' | 'score_5'
 }
 
 export interface PredictionsOut {
@@ -204,6 +206,7 @@ export const api = {
     num_rounds: number
     team: { name: string; players: Array<{ name: string; faction?: string; email?: string }> }
     pin: string
+    prediction_format?: string
   }): Promise<TournamentOut> =>
     request('/tournaments', { method: 'POST', body: JSON.stringify(data) }),
 

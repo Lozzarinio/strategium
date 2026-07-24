@@ -13,6 +13,7 @@ interface PlayerInput {
 interface FormState {
   tournamentName: string
   numRounds: string
+  predictionFormat: 'score_20' | 'score_5'
   teamName: string
   players: PlayerInput[]
   pin: string
@@ -67,6 +68,7 @@ export default function TournamentCreate() {
   const [form, setForm] = useState<FormState>({
     tournamentName: '',
     numRounds: '3',
+    predictionFormat: 'score_20',
     teamName: '',
     players: Array.from({ length: 5 }, emptyPlayer),
     pin: '',
@@ -119,6 +121,7 @@ export default function TournamentCreate() {
           })),
         },
         pin: form.pin,
+        prediction_format: form.predictionFormat,
       })
       setCaptainAccess(tournament.id, tournament.session.code)
       writeTournamentCache(tournament.id, tournament)
@@ -244,6 +247,38 @@ export default function TournamentCreate() {
                 <option key={n} value={n} className="bg-surface">{n} round{n !== 1 ? 's' : ''}</option>
               ))}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-sm text-muted mb-1.5">Prediction Format</label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                {
+                  value: 'score_20' as const,
+                  label: 'Detailed (0–20)',
+                  desc: 'Players predict their exact score from 0 to 20',
+                },
+                {
+                  value: 'score_5' as const,
+                  label: 'Simplified (1–5)',
+                  desc: '1 = Big Loss, 2 = Small Loss, 3 = Draw, 4 = Small Win, 5 = Big Win',
+                },
+              ]).map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setForm(prev => ({ ...prev, predictionFormat: opt.value }))}
+                  className={`text-left rounded-lg border px-3 py-2.5 transition-colors ${
+                    form.predictionFormat === opt.value
+                      ? 'border-accent bg-accent/10 text-white'
+                      : 'border-white/10 bg-black/20 text-muted hover:border-white/25 hover:text-white'
+                  }`}
+                >
+                  <p className="text-sm font-medium leading-tight">{opt.label}</p>
+                  <p className="text-xs mt-0.5 opacity-70 leading-snug">{opt.desc}</p>
+                </button>
+              ))}
+            </div>
           </div>
         </section>
 
