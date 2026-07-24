@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import { useHasCaptainAccess } from '../hooks/useCaptainAccess'
@@ -92,6 +92,7 @@ export default function RoundDetail() {
 
   // Prediction matrix (local editable copy)
   const [predictions, setPredictions] = useState<PredMatrix>({})
+  const [predsLoading, setPredsLoading] = useState(false)
   const [editingCell, setEditingCell] = useState<{ player: string; opponent: string } | null>(null)
   const [editValue, setEditValue] = useState('')
   const [submittingRow, setSubmittingRow] = useState<string | null>(null)
@@ -102,19 +103,41 @@ export default function RoundDetail() {
   const [optimizerError, setOptimizerError] = useState<string | null>(null)
   const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null)
 
-  // ── Sync prediction matrix from cached tournament data ───────────────────
-  // Runs on initial load and whenever the cache revalidates (background
-  // refresh or refreshCache()), so the matrix always reflects canonical data.
+  // Keep a ref so fetchPredictions closure doesn't capture a stale tournament
+  const tournamentRef = useRef(tournament)
+  tournamentRef.current = tournament
 
-  useEffect(() => {
-    if (!tournament || !roundData) return
-    const matrix: PredMatrix = {}
-    for (const player of tournament.team.players) {
-      const row = roundData.predictions[player.name]
-      matrix[player.name] = row && Object.keys(row).length > 0 ? row : null
+  // ── Fetch predictions fresh from API ─────────────────────────────────────
+  // Predictions are submitted by players independently, so they can never be
+  // reliably read from the captain's cached tournament blob. Always go to the
+  // API. This is intentionally separate from the tournament cache.
+
+  const fetchPredictions = useCallback(async () => {
+    if (!roundId || !tournamentRef.current) return
+    setPredsLoading(true)
+    try {
+      const data = await api.getPredictions(roundId)
+      const players = tournamentRef.current.team.players
+      const matrix: PredMatrix = {}
+      for (const player of players) {
+        const row = data.predictions[player.name]
+        matrix[player.name] = row && Object.keys(row).length > 0 ? row : null
+      }
+      setPredictions(matrix)
+    } catch {
+      // Keep showing whatever we already have — non-critical
+    } finally {
+      setPredsLoading(false)
     }
-    setPredictions(matrix)
-  }, [tournament, roundData])
+  }, [roundId])
+
+  // Fire once when the tournament metadata is available (covers both cache-hit
+  // and cache-miss paths). Uses tournament.id so a background cache revalidation
+  // with the same tournament doesn't trigger a redundant fetch.
+  useEffect(() => {
+    if (tournament && roundId) void fetchPredictions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tournament?.id, roundId])
 
   // ── Cell editing ──────────────────────────────────────────────────────────
 
@@ -161,7 +184,7 @@ export default function RoundDetail() {
             roundData.round_number,
             predDict,
           )
-          void refreshCache()
+          void fetchPredictions()
         } catch (err) {
           console.error('Failed to submit predictions for', playerName, err)
         } finally {
@@ -284,9 +307,29 @@ export default function RoundDetail() {
       <section className="mb-6">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-base font-semibold text-white">Prediction Matrix</h2>
-          <span className="text-xs text-muted bg-white/5 border border-white/10 rounded-full px-3 py-1">
-            {submittedCount} / {yourPlayers.length} submitted
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => void fetchPredictions()}
+              disabled={predsLoading}
+              className="flex items-center gap-1.5 text-xs text-muted hover:text-white border border-white/10
+                rounded-lg px-3 py-1.5 transition-colors disabled:opacity-40"
+            >
+              {predsLoading ? (
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              )}
+              Refresh
+            </button>
+            <span className="text-xs text-muted bg-white/5 border border-white/10 rounded-full px-3 py-1">
+              {submittedCount} / {yourPlayers.length} submitted
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-xl border border-white/10">
