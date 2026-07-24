@@ -39,7 +39,7 @@ class PlayerOut(BaseModel):
 
 class TeamCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    players: List[PlayerCreate] = Field(..., min_length=5, max_length=5)
+    players: List[PlayerCreate] = Field(..., min_length=5, max_length=8)
 
 
 class TeamOut(BaseModel):
@@ -75,12 +75,12 @@ class OpponentPlayerOut(BaseModel):
 
 class OpponentTeamCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    players: List[OpponentPlayerCreate] = Field(..., min_length=5, max_length=5)
+    players: List[OpponentPlayerCreate] = Field(..., min_length=5, max_length=8)
 
 
 class OpponentTeamUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
-    players: Optional[List[OpponentPlayerCreate]] = Field(None, min_length=5, max_length=5)
+    players: Optional[List[OpponentPlayerCreate]] = Field(None, min_length=5, max_length=8)
 
 
 class OpponentTeamOut(BaseModel):
@@ -147,6 +147,7 @@ class SessionDetailOut(BaseModel):
     rounds: List[RoundDetailOut]
     created_at: datetime
     prediction_format: str
+    team_size: int
 
     model_config = {"from_attributes": True}
 
@@ -160,6 +161,7 @@ class TournamentCreate(BaseModel):
     team: TeamCreate
     pin: str = Field(..., min_length=4, max_length=4)
     prediction_format: str = Field(default='score_20')
+    team_size: int = Field(default=5)
 
     @field_validator("pin")
     @classmethod
@@ -175,6 +177,13 @@ class TournamentCreate(BaseModel):
             raise ValueError("prediction_format must be 'score_20' or 'score_5'")
         return v
 
+    @field_validator("team_size")
+    @classmethod
+    def validate_team_size(cls, v: int) -> int:
+        if v not in (5, 8):
+            raise ValueError("team_size must be 5 or 8")
+        return v
+
 
 class TournamentOut(BaseModel):
     id: int
@@ -184,6 +193,7 @@ class TournamentOut(BaseModel):
     opponent_teams: List[OpponentTeamOut]
     created_at: datetime
     prediction_format: str
+    team_size: int
 
     model_config = {"from_attributes": True}
 

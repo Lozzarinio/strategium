@@ -118,6 +118,12 @@ def create_tournament(
     payload: schemas.TournamentCreate,
     db: Session = Depends(get_db),
 ) -> models.Tournament:
+    if len(payload.team.players) != payload.team_size:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Expected {payload.team_size} players but got {len(payload.team.players)}",
+        )
+
     code = _generate_session_code(db)
 
     # All writes in one transaction
@@ -125,6 +131,7 @@ def create_tournament(
         name=payload.name,
         pin_hash=_hash_pin(payload.pin),
         prediction_format=payload.prediction_format,
+        team_size=payload.team_size,
     )
     db.add(tournament)
     db.flush()
@@ -236,6 +243,7 @@ def get_session(code: str, db: Session = Depends(get_db)) -> dict:
         rounds=rounds_out,
         created_at=session.created_at,
         prediction_format=tournament.prediction_format,
+        team_size=tournament.team_size,
     )
 
 
@@ -301,6 +309,13 @@ def submit_predictions(
         raise HTTPException(
             status_code=400,
             detail="Round has no opponent team assigned — cannot submit predictions yet",
+        )
+
+    team_size = session.tournament.team_size
+    if len(payload.predictions) != team_size:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Expected predictions for {team_size} opponents but got {len(payload.predictions)}",
         )
 
     # Validate scores per tournament prediction format
@@ -377,7 +392,13 @@ def create_opponent_team(
     payload: schemas.OpponentTeamCreate,
     db: Session = Depends(get_db),
 ) -> models.OpponentTeam:
-    _get_tournament_or_404(tournament_id, db)
+    tournament = _get_tournament_or_404(tournament_id, db)
+
+    if len(payload.players) != tournament.team_size:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Expected {tournament.team_size} players but got {len(payload.players)}",
+        )
 
     opp_team = models.OpponentTeam(tournament_id=tournament_id, name=payload.name)
     db.add(opp_team)
@@ -445,6 +466,12 @@ def update_opponent_team(
         opp_team.name = payload.name
 
     if payload.players is not None:
+        tournament = _get_tournament_or_404(opp_team.tournament_id, db)
+        if len(payload.players) != tournament.team_size:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Expected {tournament.team_size} players but got {len(payload.players)}",
+            )
         # Replace all players: delete existing, insert new
         for old_player in opp_team.players:
             db.delete(old_player)

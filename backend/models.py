@@ -30,6 +30,7 @@ class Tournament(Base):
     name = Column(String(255), nullable=False)
     pin_hash = Column(String(255), nullable=False)
     prediction_format = Column(String(10), nullable=False, default='score_20')
+    team_size = Column(Integer, nullable=False, default=5)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Relationships
